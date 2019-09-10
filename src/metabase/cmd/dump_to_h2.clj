@@ -163,17 +163,6 @@
 
 ;;; --------------------------------------------------- Public Fns ---------------------------------------------------
 
-(defmacro dowhile->
-  "Execute `f` (and `fs`) while `(pred (f))` is true. The return value of the `f` that does not satisfy `pred`, or `nil`
-  is returned."
-  [pred & [f & fs]]
-  {:style/indent 1}
-  (when f
-    `(let [retval# ~f]
-       (if (~pred retval#)
-         (dowhile-> ~pred ~@fs)
-         retval#))))
-
 (defn dump-to-h2!
   "Transfer data from existing database specified by connection string
   to the H2 DB specified by env vars.  Intended as a tool for migrating
