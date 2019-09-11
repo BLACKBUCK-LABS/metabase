@@ -16,7 +16,7 @@
    "install-for-building-drivers"      ["with-profile" "install-for-building-drivers" "install"]
    "run"                               ["with-profile" "+run" "run"]
    "ring"                              ["with-profile" "+ring" "ring"]
-   "test"                              ["with-profile" "+expectations" "expectations"]
+   "test"                              ["with-profile" "+test" "test"]
    "bikeshed"                          ["with-profile" "+bikeshed" "bikeshed" "--max-line-length" "205"]
    "check-namespace-decls"             ["with-profile" "+check-namespace-decls" "check-namespace-decls"]
    "eastwood"                          ["with-profile" "+eastwood" "eastwood"]
@@ -152,14 +152,21 @@
   :profiles
   {:dev
    {:source-paths ["dev/src" "local/src"]
-    
+
     :dependencies
     [[clj-http-fake "1.0.3" :exclusions [slingshot]]                  ; Library to mock clj-http responses
-     [expectations "2.1.10"]                                          ; unit tests
+     [expectations/clojure-test "1.1.1"]                              ; compatibility layer for `expectations` tests
+     [pjstadig/humane-test-output "0.9.0"]
      [ring/ring-mock "0.3.2"]]
 
     :plugins
     [[lein-environ "1.1.0"]]                                          ; easy access to environment variables
+
+    :injections
+    [(println "INJECTING STUFF!")
+     (require 'pjstadig.humane-test-output)
+     (pjstadig.humane-test-output/activate!)
+     (require 'metabase.test.redefs)]
 
     :env      {:mb-run-mode "dev"}
     :jvm-opts ["-Dlogfile.path=target/log"]}
@@ -185,7 +192,8 @@
    [:exclude-tests
     :include-all-drivers
     {:dependencies
-     ;; used internally by lein ring to track namespace changes. Newer version contains fix by yours truly with 1000x faster launch time
+     ;; used internally by lein ring to track namespace changes. Newer version contains fix by yours truly with 1000x
+     ;; faster launch time
      [[ns-tracker "0.4.0"]]
 
      :plugins
@@ -205,18 +213,9 @@
     :middleware
     [leiningen.include-drivers/middleware]}
 
-   :expectations
+   :test
    [:with-include-drivers-middleware
-    {:plugins
-     [[lein-expectations "0.0.8"
-       :exclusions [expectations]]]
-
-     :injections
-     [(require 'expectation-options                                   ; expectations customizations
-               'metabase.test-setup                                   ; for test setup stuff
-               'metabase.test.util)]                                  ; for the toucan.util.test default values for temp models
-
-     :resource-paths
+    {:resource-paths
      ["test_resources"]
 
      :env
@@ -224,8 +223,7 @@
       :mb-run-mode       "test"}
 
      :jvm-opts
-     ["-Xms1024m"                                                     ; give JVM a decent heap size to start with
-      "-Duser.timezone=UTC"
+     ["-Duser.timezone=UTC"
       "-Dmb.db.in.memory=true"
       "-Dmb.jetty.join=false"
       "-Dmb.jetty.port=3010"
