@@ -62,8 +62,7 @@
   ;; speeds up loading of metabase.driver.query-processor-test significantly
   `(t/deftest ~(symbol (str "expect-with-drivers-" (hash &form)))
      (test-drivers ~drivers
-       (t/is (= ~expected
-                ~actual)))))
+       (t/is (~'expect= ~expected ~actual)))))
 
 (defmacro test-all-drivers [& body]
   `(test-drivers tx.env/test-drivers ~@body))

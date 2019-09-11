@@ -2,62 +2,127 @@
   (:require [clojure
              [data :as data]
              [test :as t]]
-            [clojure.spec.alpha :as spec]
-            [expectations.clojure.test :as ex.test]))
+            [methodical.core :as m]))
 
-(defn- spec? [e]
-  (and
-   (keyword? e)
-   (boolean (spec/get-spec e))))
+(def compare-expr* nil) ; NOCOMMIT
 
-(defn- compare-expr [expected actual]
-  (cond
-    (spec? expected)
-    (spec/valid? expected actual)
+;; Basically a Chain of Responibility pattern: we try each impl in turn until one of them accepts the args and returns
+;; a report
+(m/defmulti ^:private compare-expr*
+  {:arglists '([expected actual form])}
+  :none
+  :combo      (m/or-method-combination)
+  :dispatcher (m/everything-dispatcher))
 
-    (map? expected)
-    (= (into {} expected)
-       (into {} actual))
+(defrecord ExceptionResult [e])
 
-    (fn? expected)
-    (expected actual)
+;; When `actual` throws an Exception. Result is wrapped in ExceptionResult
+(m/defmethod compare-expr* :exception-thrown
+  [expected actual _]
+  (when (instance? ExceptionResult actual)
+    (let [{:keys [e]} actual]
+      (cond
+        (not (isa? expected Throwable))
+        (throw e)
 
-    :else
-    (= expected actual)))
+        (not (instance? expected e))
+        {:type     :fail
+         :expected (format "Threw %s" expected)
+         :actual   (format "Threw %s" (class e))}
 
-(defn compare* [expected actual message [_ e :as form]]
-  (let [result (compare-expr expected actual)]
-    (t/do-report
-     (if result
-       {:type     :pass
-        :message  message
-        :expected form
-        :actual   (if (fn? expected)
-                    (list e actual)
-                    actual)}
-       {:type     :fail
-        :message  (if (spec? expected)
-                    (spec/explain-str expected)
-                    message)
-        :diffs    [[actual (take 2 (data/diff expected actual))]]
-        :expected expected
-        :actual   (if (fn? expected)
-                    (list 'not (list e actual))
-                    [actual])}))))
+        :else
+        {:type   :pass
+         :actual (class e)}))))
 
-;; tweaked replacement of the version that ships with `expectations.clojure.test` -- this one replicates some of our
-;; custom tweaks like considering a regular map and a record type (usually a Toucan instance) to be equal if their
-;; contents are equal
-(defmethod t/assert-expr '=? [msg form]
-  ;; (is (=? val-or-pred expr))
-  (let [[_ e a] form]
-    `(let [e# ~e
-           a# ~a]
-       (compare* e# a# ~msg '~form))))
+;; If an Exception was expected, but none was thrown
+(m/defmethod compare-expr* :expected-exception-none-thrown
+  [expected actual _]
+  (when (and (isa? expected Throwable)
+             (not (instance? ExceptionResult actual)))
+    (if (instance? expected actual)
+      {:type :pass}
+      {:type     :fail
+       :expected (format "Threw %s" expected)})))
+
+(m/defmethod compare-expr* :truthy
+  [expected actual _]
+  (when (= expected ::truthy)
+    (if actual
+      {:type :pass}
+      {:type :fail, :expected "A truthy value"})))
+
+(m/defmethod compare-expr* :fn
+  [expected actual [_ e a]]
+  (when (fn? expected)
+    (if (expected actual)
+      {:type :pass}
+      {:type :fail, :expected (list e a)})))
+
+(m/defmethod compare-expr* :regex
+  [expected actual _]
+  (when (instance? java.util.regex.Pattern expected)
+    {:type (if (re-find expected actual)
+             :pass
+             :fail)}))
+
+(m/defmethod compare-expr* :maps
+  [expected actual _]
+  (when (and (map? expected)
+             (map? actual)
+             (not (instance? ExceptionResult actual)))
+    (let [[only-in-e only-in-a] (data/diff expected actual)]
+      (if (and (nil? only-in-e) (nil? only-in-a))
+        {:type :pass}
+        {:type   :fail
+         :actual [actual]
+         :diffs  [[actual [only-in-e only-in-a]]]}))))
+
+(m/defmethod compare-expr* :expected-class
+  [expected actual _]
+  (when (and (class? expected)
+             (not (instance? ExceptionResult actual)))
+    (cond
+      (instance? expected actual)
+      {:type :pass}
+
+      (= expected actual)
+      {:type :pass}
+
+      :else
+      {:type     :fail
+       :expected (format "Instance of %s" expected)
+       :actual   actual})))
+
+(defn- default-compare-expr [expected actual _]
+  (if (= expected actual)
+    {:type :pass}
+    {:type  :fail
+     :diffs [[actual (take 2 (data/diff expected actual))]]}))
+
+(defn compare-expr [expected actual message form]
+  (merge
+   {:message  message
+    :expected expected
+    :actual   actual}
+   (or (compare-expr* expected actual form)
+       (default-compare-expr expected actual form))))
+
+(defmethod t/assert-expr 'expect= [msg [_ e a :as form]]
+  `(let [a# (try
+              ~a
+              (catch Throwable e#
+                (->ExceptionResult e#)))]
+     (t/do-report
+      (compare-expr ~e a# ~msg '~form))))
+
 
 (defmacro ^:deprecated expect
   "Simple macro that simulates converts an Expectations-style `expect` form into a `clojure.test` `deftest` form."
   {:arglists '([actual] [actual expected])}
-  [& args]
-  `(t/deftest ~(symbol (format "expect-%d" (hash &form)))
-     (ex.test/expect ~@args)))
+  ([actual]
+   `(expect ::truthy ~actual))
+
+  ([expected actual]
+   `(t/deftest ~(symbol (format "expect-%d" (hash &form)))
+      (t/is
+       (~'expect= ~expected ~actual)))))

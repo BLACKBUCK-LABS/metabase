@@ -99,6 +99,7 @@
                  com.sun.jmx/jmxri]]
    [medley "1.2.0"]                                                   ; lightweight lib of useful functions
    [metabase/connection-pool "1.0.2"]                                 ; simple wrapper around C3P0. JDBC connection pools
+   [methodical "0.9.3-alpha"]
    [metabase/mbql "1.3.4"]                                            ; MBQL language schema & util fns
    [metabase/throttle "1.0.2"]                                        ; Tools for throttling access to API endpoints and other code pathways
    [javax.xml.bind/jaxb-api "2.4.0-b180830.0359"]                     ; add the `javax.xml.bind` classes which we're still using but were removed in Java 11
@@ -155,7 +156,6 @@
 
     :dependencies
     [[clj-http-fake "1.0.3" :exclusions [slingshot]]                  ; Library to mock clj-http responses
-     [expectations/clojure-test "1.1.1"]                              ; compatibility layer for `expectations` tests
      [pjstadig/humane-test-output "0.9.0"]
      [ring/ring-mock "0.3.2"]]
 
@@ -163,8 +163,7 @@
     [[lein-environ "1.1.0"]]                                          ; easy access to environment variables
 
     :injections
-    [(println "INJECTING STUFF!")
-     (require 'pjstadig.humane-test-output)
+    [(require 'pjstadig.humane-test-output)
      (pjstadig.humane-test-output/activate!)
      (require 'metabase.test.redefs)]
 
