@@ -447,11 +447,18 @@ export default class Question {
       ];
     } else {
       const getDatasetQueryResult = datasetQuery => {
+        let query = datasetQuery['native']['query'].toLowerCase();
+        console.log(query);
+        if(query.includes("select") && !query.includes("limit")) {
+		query += " limit 10000";
+                datasetQuery['native']['query'] = query;
+        }
+        console.log(datasetQuery); 
         const datasetQueryWithParameters = {
           ...datasetQuery,
           parameters,
         };
-
+        console.log(datasetQueryWithParameters);     
         return MetabaseApi.dataset(
           datasetQueryWithParameters,
           cancelDeferred ? { cancelled: cancelDeferred.promise } : {},

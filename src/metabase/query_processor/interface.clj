@@ -19,7 +19,7 @@
 
    This is coming directly from the max rows allowed by Excel for now ...
    https://support.office.com/en-nz/article/Excel-specifications-and-limits-1672b34d-7043-467e-8e27-269d656771c3"
-  1048576)
+  100000)
 
 
 ;;; -------------------------------------------------- DYNAMIC VARS --------------------------------------------------

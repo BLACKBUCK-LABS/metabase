@@ -17,7 +17,7 @@ import * as Urls from "metabase/lib/urls";
 import _ from "underscore";
 import cx from "classnames";
 
-const EXPORT_FORMATS = ["csv", "xlsx", "json"];
+const EXPORT_FORMATS = ["csv", "json"];
 
 const QueryDownloadWidget = ({ className, card, result, uuid, token }) => (
   <PopoverWithTrigger
