@@ -238,6 +238,8 @@
   "Run QUERY and save appropriate `QueryExecution` info, and then return results (or an error message) in the usual
   format."
   [query]
+  (println "inside run and seave query")
+  (println query)
   (let [query-execution (query-execution-info query)]
     (try
       (let [result (process-query query)]
@@ -280,9 +282,40 @@
   OPTIONS must conform to the `DatasetQueryOptions` schema; refer to that for more details."
   {:style/indent 1}
   [query, options :- DatasetQueryOptions]
-  (run-and-save-query! (assoc query :info (assoc options
-                                            :query-hash (qputil/query-hash query)
-                                            :query-type (if (qputil/mbql-query? query) "MBQL" "native")))))
+  (println "inside process query and save execution")
+  (let [ query_with_options (assoc query :info (assoc options
+                              :query-hash (qputil/query-hash query)
+                              :query-type (if (qputil/mbql-query? query) "MBQL" "native")))]
+
+      (if-let [native_query (:native query_with_options)]
+         (let [raw_query (clojure.string/lower-case (:query native_query ))
+             context (get-in query_with_options [:info :context])
+                      query_without_limit (clojure.string/replace (clojure.string/replace raw_query #"[ ;]*$" "") #"limit[ ]*\d+$" "" ) 
+                      limit (atom 10000) ]
+             (if-let [limit_text (re-find #"limit[ ]*\d+[ ;]*$" raw_query)]
+                (let [limit_value (re-find #"\d+" limit_text) ]
+                    (reset! limit limit_value)
+                    (println limit_value)
+                    (if ( > (Integer/parseInt limit_value) 10000)
+                       (if (or (clojure.string/includes? context "question") (clojure.string/includes? context "ad-hoc"))
+                           (reset! limit 10000)
+                       )
+                       (println "Do nothing")
+                    )
+                )
+             )
+             (println (update-in query_with_options [:native] assoc :query (str query_without_limit " LIMIT " @limit ";")))
+             (run-and-save-query! (update-in query_with_options [:native] assoc :query (str query_without_limit " LIMIT " @limit ";")))
+           )
+         ( run-and-save-query! query_with_options)
+      )
+  )
+)
+	
+   
+  ;(run-and-save-query! (assoc query :info (assoc options
+  ;                                          :query-hash (qputil/query-hash query)
+  ;                                          :query-type (if (qputil/mbql-query? query) "MBQL" "native")))))
 
 (def ^:private ^:const max-results-bare-rows
   "Maximum number of rows to return specifically on :rows type queries via the API."

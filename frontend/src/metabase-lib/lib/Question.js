@@ -439,17 +439,21 @@ export default class Question {
         ignore_cache: ignoreCache,
         parameters,
       };
+      console.log("in van use card");
+      console.log(queryParams);
       return [
         await CardApi.query(queryParams, {
           cancelled: cancelDeferred.promise,
         }),
-      ];
+      ]
     } else {
+      console.log("in else part");
       const getDatasetQueryResult = datasetQuery => {
-        let query = datasetQuery['native']['query'].toLowerCase();
-        if(query.includes("select") && !query.includes("limit")) {
+        let query = datasetQuery['native']['query'];
+        let loweredCasedQuery = query.toLowerCase();
+        if(loweredCasedQuery.includes("select") && !loweredCasedQuery.includes("limit")) {
  		query = query.replace(/\;$/, '');
-		query += " limit 10000";
+		query += " LIMIT 10000";
                 datasetQuery['native']['query'] = query;
         }
         const datasetQueryWithParameters = {
