@@ -439,27 +439,19 @@ export default class Question {
         ignore_cache: ignoreCache,
         parameters,
       };
-      console.log("in van use card");
-      console.log(queryParams);
+
       return [
         await CardApi.query(queryParams, {
           cancelled: cancelDeferred.promise,
         }),
-      ]
+      ];
     } else {
-      console.log("in else part");
       const getDatasetQueryResult = datasetQuery => {
-        let query = datasetQuery['native']['query'];
-        let loweredCasedQuery = query.toLowerCase();
-        if(loweredCasedQuery.includes("select") && !loweredCasedQuery.includes("limit")) {
- 		query = query.replace(/\;$/, '');
-		query += " LIMIT 10000";
-                datasetQuery['native']['query'] = query;
-        }
         const datasetQueryWithParameters = {
           ...datasetQuery,
           parameters,
         };
+
         return MetabaseApi.dataset(
           datasetQueryWithParameters,
           cancelDeferred ? { cancelled: cancelDeferred.promise } : {},

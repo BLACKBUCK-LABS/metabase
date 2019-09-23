@@ -234,17 +234,61 @@
    :result_rows       0
    :start_time_millis (System/currentTimeMillis)})
 
+
+(defn adhoc-or-question?
+  "Check if adhoc or question query"
+  [context]
+  (if (or (clojure.string/includes? context "question") (clojure.string/includes? context "ad-hoc"))
+       true false
+  )
+)
+
+(defn add-limit-query
+  [query]
+
+  (if-let [native_query (:native query)]
+      (let [raw_query (:query native_query )
+            context (get-in query [:info :context])
+            query_without_limit (clojure.string/replace (clojure.string/replace raw_query #"[ ;]*$" "") #"(?i)limit[ ]*\d+$" "" )
+            limit (if(adhoc-or-question? context) (atom 10000) (atom 100000)) ]
+           (if-let [limit_text (re-find #"limit[ ]*\d+[ ;]*$" raw_query)]
+                (let [limit_value (re-find #"\d+" limit_text) ]
+                    (if ( > (Integer/parseInt limit_value) @limit)
+                       (reset! limit @limit)
+                       (reset! limit limit_value)
+                    )
+                )
+             )
+             ;(str query_without_limit " LIMIT " @limit ";")
+             (update-in query[:native] assoc :query (str query_without_limit " LIMIT " @limit ";"))
+         )
+         query
+      )
+)
+
+(defn result-with-original-query
+  [result, query]
+
+  (if (:native query)
+     (update-in result[:data :native_form] assoc :query (get-in query [:native :query]) )
+     (result)
+  )
+)
+
 (defn- run-and-save-query!
   "Run QUERY and save appropriate `QueryExecution` info, and then return results (or an error message) in the usual
   format."
   [query]
-  (println "inside run and seave query")
   (println query)
-  (let [query-execution (query-execution-info query)]
+  (println "inside run and seave query")
+  (let [query-execution (query-execution-info query)
+	limit_query (add-limit-query query)]
     (try
-      (let [result (process-query query)]
+      (let [result (process-query limit_query)]
+	(println result)
+        (println (result-with-original-query result query))
         (assert-query-status-successful result)
-        (save-and-return-successful-query! query-execution result))
+        (save-and-return-successful-query! query-execution (result-with-original-query result query)))
       (catch Throwable e
         (log/warn (u/format-color 'red "Query failure: %s\n%s"
                     (.getMessage e)
@@ -268,6 +312,7 @@
                        *allow-queries-with-no-executor-id*))
                  "executed-by cannot be nil unless *allow-queries-with-no-executor-id* is true"))
 
+
 (s/defn process-query-and-save-execution!
   "Process and run a json based dataset query and return results.
 
@@ -283,39 +328,11 @@
   {:style/indent 1}
   [query, options :- DatasetQueryOptions]
   (println "inside process query and save execution")
-  (let [ query_with_options (assoc query :info (assoc options
-                              :query-hash (qputil/query-hash query)
-                              :query-type (if (qputil/mbql-query? query) "MBQL" "native")))]
-
-      (if-let [native_query (:native query_with_options)]
-         (let [raw_query (clojure.string/lower-case (:query native_query ))
-             context (get-in query_with_options [:info :context])
-                      query_without_limit (clojure.string/replace (clojure.string/replace raw_query #"[ ;]*$" "") #"limit[ ]*\d+$" "" ) 
-                      limit (atom 10000) ]
-             (if-let [limit_text (re-find #"limit[ ]*\d+[ ;]*$" raw_query)]
-                (let [limit_value (re-find #"\d+" limit_text) ]
-                    (reset! limit limit_value)
-                    (println limit_value)
-                    (if ( > (Integer/parseInt limit_value) 10000)
-                       (if (or (clojure.string/includes? context "question") (clojure.string/includes? context "ad-hoc"))
-                           (reset! limit 10000)
-                       )
-                       (println "Do nothing")
-                    )
-                )
-             )
-             (println (update-in query_with_options [:native] assoc :query (str query_without_limit " LIMIT " @limit ";")))
-             (run-and-save-query! (update-in query_with_options [:native] assoc :query (str query_without_limit " LIMIT " @limit ";")))
-           )
-         ( run-and-save-query! query_with_options)
-      )
-  )
-)
-	
    
-  ;(run-and-save-query! (assoc query :info (assoc options
-  ;                                          :query-hash (qputil/query-hash query)
-  ;                                          :query-type (if (qputil/mbql-query? query) "MBQL" "native")))))
+  (run-and-save-query! (assoc query :info (assoc options
+                                            :query-hash (qputil/query-hash query)
+                                            :query-type (if (qputil/mbql-query? query) "MBQL" "native")))))
+
 
 (def ^:private ^:const max-results-bare-rows
   "Maximum number of rows to return specifically on :rows type queries via the API."
