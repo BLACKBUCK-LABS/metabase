@@ -244,6 +244,9 @@
 )
 
 (defn add-limit-query
+  "Add limit to query. If is native query(adhoc or question limit is set to 10000 else json or csv then limit set to 100000. 
+  <todo> write for mbql"
+
   [query]
 
   (if-let [native_query (:native query)]
@@ -259,7 +262,6 @@
                     )
                 )
              )
-             ;(str query_without_limit " LIMIT " @limit ";")
              (update-in query[:native] assoc :query (str query_without_limit " LIMIT " @limit ";"))
          )
          query
@@ -267,6 +269,8 @@
 )
 
 (defn result-with-original-query
+  "modify result to previous query(ie. query without modification(done by add-limit-query above).
+   This is done as this raw query is used for json and csv download" 
   [result, query]
 
   (if (:native query)
@@ -279,15 +283,14 @@
   "Run QUERY and save appropriate `QueryExecution` info, and then return results (or an error message) in the usual
   format."
   [query]
-  (println query)
-  (println "inside run and seave query")
+  (println "inside run and save query")
   (let [query-execution (query-execution-info query)
 	limit_query (add-limit-query query)]
     (try
       (let [result (process-query limit_query)]
-	(println result)
-        (println (result-with-original-query result query))
+        (println (get-in result [:data :native_form]))
         (assert-query-status-successful result)
+        (println (get-in result [:data :native_form]))
         (save-and-return-successful-query! query-execution (result-with-original-query result query)))
       (catch Throwable e
         (log/warn (u/format-color 'red "Query failure: %s\n%s"
@@ -327,7 +330,6 @@
   OPTIONS must conform to the `DatasetQueryOptions` schema; refer to that for more details."
   {:style/indent 1}
   [query, options :- DatasetQueryOptions]
-  (println "inside process query and save execution")
    
   (run-and-save-query! (assoc query :info (assoc options
                                             :query-hash (qputil/query-hash query)
