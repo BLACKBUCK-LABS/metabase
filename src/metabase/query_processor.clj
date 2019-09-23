@@ -256,13 +256,12 @@
             limit (if(adhoc-or-question? context) (atom 10000) (atom 100000)) ]
            (if-let [limit_text (re-find #"limit[ ]*\d+[ ;]*$" raw_query)]
                 (let [limit_value (re-find #"\d+" limit_text) ]
-                    (if ( > (Integer/parseInt limit_value) @limit)
-                       (reset! limit @limit)
+                    (if ( < (Integer/parseInt limit_value) @limit)
                        (reset! limit limit_value)
                     )
                 )
-             )
-             (update-in query[:native] assoc :query (str query_without_limit " LIMIT " @limit ";"))
+           )
+           (update-in query[:native] assoc :query (str query_without_limit " LIMIT " @limit ";"))
          )
          query
       )
@@ -273,9 +272,9 @@
    This is done as this raw query is used for json and csv download" 
   [result, query]
 
-  (if (:native query)
+  (if (= (get-in query[:type]) "native")
      (update-in result[:data :native_form] assoc :query (get-in query [:native :query]) )
-     (result)
+     result
   )
 )
 
@@ -288,9 +287,7 @@
 	limit_query (add-limit-query query)]
     (try
       (let [result (process-query limit_query)]
-        (println (get-in result [:data :native_form]))
         (assert-query-status-successful result)
-        (println (get-in result [:data :native_form]))
         (save-and-return-successful-query! query-execution (result-with-original-query result query)))
       (catch Throwable e
         (log/warn (u/format-color 'red "Query failure: %s\n%s"
