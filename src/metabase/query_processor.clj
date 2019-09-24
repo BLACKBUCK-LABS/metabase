@@ -248,9 +248,6 @@
 (defn limit-native-query? 
   [database]
   (let[engine (:engine (db/select-one  (into [Database] [:id :engine]) :id database))]
-        (println engine)
-        (println (name engine))
-        (println (type engine))
         (if (some (partial =  (name engine)) ["presto" "mysql" "postgres"]) true false)
   ))
 
@@ -259,14 +256,11 @@
   <todo> write for mbql"
 
   [{:keys [database], :as query}]
-  (println (contains? query :native))
-  (println (limit-native-query? database))
   (if (and (contains? query :native) (limit-native-query? database))
       (let [raw_query (get-in query[:native :query])
             context (get-in query [:info :context])
             query_without_limit (clojure.string/replace (clojure.string/replace raw_query #"[ ;]*$" "") #"(?i)limit[ ]*\d+$" "" )
             limit (if(adhoc-or-question? context) (atom 10000) (atom 100000)) ]
-            (println raw_query)
             (if-let [limit_text (re-find #"limit[ ]*\d+[ ;]*$" raw_query)]
                 (let [limit_value (re-find #"\d+" limit_text) ]
                     (if ( < (Integer/parseInt limit_value) @limit)
@@ -295,11 +289,8 @@
   "Run QUERY and save appropriate `QueryExecution` info, and then return results (or an error message) in the usual
   format."
   [query]
-  (println "inside run and save query")
   (let [query-execution (query-execution-info query)
 	limit_query (add-limit-query query)]
-    (println limit_query)
-    (println query)
     (try
       (let [result (process-query limit_query)]
         (assert-query-status-successful result)
