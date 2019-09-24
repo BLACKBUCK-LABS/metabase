@@ -256,7 +256,8 @@
   <todo> write for mbql"
 
   [{:keys [database], :as query}]
-  (if (and (contains? query :native) (limit-native-query? database))
+  
+  (if (and (contains? query :native) (limit-native-query? database) (clojure.string/includes? (clojure.string/lower-case (get-in query[:native :query])) "select"))
       (let [raw_query (get-in query[:native :query])
             context (get-in query [:info :context])
             query_without_limit (clojure.string/replace (clojure.string/replace raw_query #"[ ;]*$" "") #"(?i)limit[ ]*\d+$" "" )
