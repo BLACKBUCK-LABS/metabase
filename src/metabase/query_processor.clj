@@ -35,6 +35,7 @@
              [source-table :as source-table]]
             [metabase.query-processor.util :as qputil]
             [metabase.util.schema :as su]
+            [metabase.models.database :refer [Database]]
             [schema.core :as s]
             [toucan.db :as db]))
 
@@ -243,28 +244,40 @@
   )
 )
 
+
+(defn limit-native-query? 
+  [database]
+  (let[engine (:engine (db/select-one  (into [Database] [:id :engine]) :id database))]
+        (println engine)
+        (println (name engine))
+        (println (type engine))
+        (if (some (partial =  (name engine)) ["presto" "mysql" "postgres"]) true false)
+  ))
+
 (defn add-limit-query
   "Add limit to query. If is native query(adhoc or question limit is set to 10000 else json or csv then limit set to 100000. 
   <todo> write for mbql"
 
-  [query]
-
-  (if-let [native_query (:native query)]
-      (let [raw_query (:query native_query )
+  [{:keys [database], :as query}]
+  (println (contains? query :native))
+  (println (limit-native-query? database))
+  (if (and (contains? query :native) (limit-native-query? database))
+      (let [raw_query (get-in query[:native :query])
             context (get-in query [:info :context])
             query_without_limit (clojure.string/replace (clojure.string/replace raw_query #"[ ;]*$" "") #"(?i)limit[ ]*\d+$" "" )
             limit (if(adhoc-or-question? context) (atom 10000) (atom 100000)) ]
-           (if-let [limit_text (re-find #"limit[ ]*\d+[ ;]*$" raw_query)]
+            (println raw_query)
+            (if-let [limit_text (re-find #"limit[ ]*\d+[ ;]*$" raw_query)]
                 (let [limit_value (re-find #"\d+" limit_text) ]
                     (if ( < (Integer/parseInt limit_value) @limit)
                        (reset! limit limit_value)
                     )
                 )
-           )
-           (update-in query[:native] assoc :query (str query_without_limit " LIMIT " @limit ";"))
-         )
-         query
+            )
+           (update-in query[:native] assoc :query (str query_without_limit " LIMIT " @limit ))
       )
+      query
+   )
 )
 
 (defn result-with-original-query
@@ -285,6 +298,8 @@
   (println "inside run and save query")
   (let [query-execution (query-execution-info query)
 	limit_query (add-limit-query query)]
+    (println limit_query)
+    (println query)
     (try
       (let [result (process-query limit_query)]
         (assert-query-status-successful result)
