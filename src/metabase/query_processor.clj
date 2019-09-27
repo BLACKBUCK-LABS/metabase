@@ -248,7 +248,7 @@
 (defn limit-native-query? 
   [database]
   (let[engine (:engine (db/select-one  (into [Database] [:id :engine]) :id database))]
-        (if (some (partial =  (name engine)) ["presto" "mysql" "postgres"]) true false)
+        (if (some (partial =  (name engine)) ["presto" "mysql" "postgres" "redshift"]) true false)
   ))
 
 (defn add-limit-query
@@ -256,7 +256,6 @@
   <todo> write for mbql"
 
   [{:keys [database], :as query}]
-  
   (if (and (contains? query :native) (limit-native-query? database) (clojure.string/includes? (clojure.string/lower-case (get-in query[:native :query])) "select"))
       (let [raw_query (get-in query[:native :query])
             context (get-in query [:info :context])
@@ -294,6 +293,8 @@
 	limit_query (add-limit-query query)]
     (try
       (let [result (process-query limit_query)]
+        (println query)
+        (println limit_query)
         (assert-query-status-successful result)
         (save-and-return-successful-query! query-execution (result-with-original-query result query)))
       (catch Throwable e
