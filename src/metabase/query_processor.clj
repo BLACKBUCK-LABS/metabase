@@ -293,8 +293,6 @@
 	limit_query (add-limit-query query)]
     (try
       (let [result (process-query limit_query)]
-        (println query)
-        (println limit_query)
         (assert-query-status-successful result)
         (save-and-return-successful-query! query-execution (result-with-original-query result query)))
       (catch Throwable e
