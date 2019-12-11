@@ -245,30 +245,25 @@
 )
 
 
-(defn limit-native-query? 
+(defn limit-native-query?
   [database]
   (let[engine (:engine (db/select-one  (into [Database] [:id :engine]) :id database))]
         (if (some (partial =  (name engine)) ["presto" "mysql" "postgres" "redshift"]) true false)
   ))
 
 (defn add-limit-query
-  "Add limit to query. If is native query(adhoc or question limit is set to 10000 else json or csv then limit set to 100000. 
+  "Add limit to query. If is native query(adhoc or question limit is set to 10000 else json or csv then limit set to 100000.
   <todo> write for mbql"
 
   [{:keys [database], :as query}]
   (if (and (contains? query :native) (limit-native-query? database) (clojure.string/includes? (clojure.string/lower-case (get-in query[:native :query])) "select"))
-      (let [raw_query (get-in query[:native :query])
-            context (get-in query [:info :context])
-            query_without_limit (clojure.string/replace (clojure.string/replace raw_query #"[ ;]*$" "") #"(?i)limit[ ]*\d+$" "" )
+      (let [context (get-in query [:info :context])
+            raw_query (clojure.string/replace (get-in query[:native :query]) #"[ ;]*$" "" )
             limit (if(adhoc-or-question? context) (atom 10000) (atom 100000)) ]
-            (if-let [limit_text (re-find #"limit[ ]*\d+[ ;]*$" raw_query)]
-                (let [limit_value (re-find #"\d+" limit_text) ]
-                    (if ( < (Integer/parseInt limit_value) @limit)
-                       (reset! limit limit_value)
-                    )
-                )
+            (if-not (re-find #"(?i) limit" raw_query)
+              (update-in query[:native] assoc :query (str raw_query " limit " @limit ))
+              query
             )
-           (update-in query[:native] assoc :query (str query_without_limit " LIMIT " @limit ))
       )
       query
    )
@@ -276,7 +271,7 @@
 
 (defn result-with-original-query
   "modify result to previous query(ie. query without modification(done by add-limit-query above).
-   This is done as this raw query is used for json and csv download" 
+   This is done as this raw query is used for json and csv download"
   [result, query]
 
   (if (= (get-in query[:type]) "native")
@@ -333,7 +328,7 @@
   OPTIONS must conform to the `DatasetQueryOptions` schema; refer to that for more details."
   {:style/indent 1}
   [query, options :- DatasetQueryOptions]
-   
+
   (run-and-save-query! (assoc query :info (assoc options
                                             :query-hash (qputil/query-hash query)
                                             :query-type (if (qputil/mbql-query? query) "MBQL" "native")))))
