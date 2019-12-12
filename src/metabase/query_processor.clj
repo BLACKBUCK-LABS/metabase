@@ -260,7 +260,7 @@
       (let [context (get-in query [:info :context])
             raw_query (clojure.string/replace (get-in query[:native :query]) #"[ ;]*$" "" )
             limit (if(adhoc-or-question? context) (atom 10000) (atom 100000)) ]
-            (if-not (re-find #"(?i) limit" raw_query)
+            (if-not (re-find #"(?i)limit " raw_query)
               (update-in query[:native] assoc :query (str raw_query " limit " @limit ))
               query
             )
