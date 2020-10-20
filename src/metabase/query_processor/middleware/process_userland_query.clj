@@ -5,11 +5,11 @@
   (:require [clojure.tools.logging :as log]
             [java-time :as t]
             [metabase.models
+             [database :refer [Database]]
              [query :as query]
              [query-execution :as query-execution :refer [QueryExecution]]]
             [metabase.query-processor.util :as qputil]
             [metabase.util.i18n :refer [trs]]
-            [metabase.models.database :refer [Database]]
             [toucan.db :as db]))
 
 (defn- add-running-time [{start-time-ms :start_time_millis, :as query-execution}]
