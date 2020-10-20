@@ -9,6 +9,7 @@
              [query-execution :as query-execution :refer [QueryExecution]]]
             [metabase.query-processor.util :as qputil]
             [metabase.util.i18n :refer [trs]]
+            [metabase.models.database :refer [Database]]
             [toucan.db :as db]))
 
 (defn- add-running-time [{start-time-ms :start_time_millis, :as query-execution}]
@@ -32,7 +33,7 @@
   (query/save-query-and-update-average-execution-time! query query-hash running-time)
   (if-not context
     (log/warn (trs "Cannot save QueryExecution, missing :context"))
-    (db/insert! QueryExecution (dissoc query-execution :json_query))))
+    (db/insert! QueryExecution (dissoc query-execution :json_query :original_query_stmt))))
 
 (defn- save-query-execution!
   "Save a `QueryExecution` row containing `execution-info`. Done asynchronously when a query is finished."
@@ -63,12 +64,25 @@
 ;;; |                                                   Middleware                                                   |
 ;;; +----------------------------------------------------------------------------------------------------------------+
 
+(defn result-with-original-query
+      "Modify result with original query (ie. query without modification(done by add-limit-query).
+       This is done as this raw query is used for json and csv download"
+      [result, query-execution-info]
+      (if (and (get-in query-execution-info[:native]) (some? (get-in query-execution-info[:original_query_stmt])))
+        (-> result
+          (assoc-in [:data :native_form :query] (get-in query-execution-info [:original_query_stmt]))
+          (assoc-in [:json_query :native :query] (get-in query-execution-info [:original_query_stmt]))
+        )
+        result
+        )
+      )
+
 (defn- success-response [{query-hash :hash, :as query-execution} {cached? :cached, :as result}]
   (merge
+   (result-with-original-query result query-execution)
    (-> query-execution
        add-running-time
-       (dissoc :error :hash :executor_id :card_id :dashboard_id :pulse_id :result_rows :native))
-   result
+       (dissoc :error :hash :executor_id :card_id :dashboard_id :pulse_id :result_rows :native :original_query_stmt))
    {:status                 :completed
     :average_execution_time (when cached?
                               (query/average-execution-time-ms query-hash))}))
@@ -95,35 +109,73 @@
          (rf result row))))))
 
 (defn- query-execution-info
-  "Return the info for the QueryExecution entry for this `query`."
+  "Return the info for the QueryExecution entry for this `query`.
+  setting original_query in query-execution-info for the context of query passed by client for other middleware's
+  "
   {:arglists '([query])}
   [{{:keys [executed-by query-hash context card-id dashboard-id pulse-id]} :info
     database-id                                                            :database
     query-type                                                             :type
     :as                                                                    query}]
   {:pre [(instance? (Class/forName "[B") query-hash)]}
-  {:database_id       database-id
-   :executor_id       executed-by
-   :card_id           card-id
-   :dashboard_id      dashboard-id
-   :pulse_id          pulse-id
-   :context           context
-   :hash              query-hash
-   :native            (= (keyword query-type) :native)
-   :json_query        (cond-> (dissoc query :info)
-                        (empty? (:parameters query)) (dissoc :parameters))
-   :started_at        (t/zoned-date-time)
-   :running_time      0
-   :result_rows       0
-   :start_time_millis (System/currentTimeMillis)})
+  {:database_id         database-id
+   :executor_id         executed-by
+   :card_id             card-id
+   :dashboard_id        dashboard-id
+   :pulse_id            pulse-id
+   :context             context
+   :hash                query-hash
+   :native              (= (keyword query-type) :native)
+   :original_query_stmt (get-in query[:native :original_query])
+   :json_query          (cond-> (dissoc query :info)
+                          (empty? (:parameters query)) (dissoc :parameters))
+   :started_at          (t/zoned-date-time)
+   :running_time        0
+   :result_rows         0
+   :start_time_millis   (System/currentTimeMillis)})
+
+(defn adhoc-or-question?
+      "Check if adhoc or question query"
+      [context]
+      (if (or (clojure.string/includes? context "question") (clojure.string/includes? context "ad-hoc"))
+        true false
+        )
+      )
+
+(defn limit-native-query?
+      [database]
+      (let[engine (:engine (db/select-one  (into [Database] [:id :engine]) :id database))]
+          (if (some (partial =  (name engine)) ["presto" "mysql" "postgres" "redshift"]) true false)
+          ))
+
+(defn add-limit-query
+      "Add limit to query. If is native query(adhoc or question limit is set to 10000 else json or csv then limit set to 100000.
+      Works only for native queries"
+
+      [{:keys [database], :as query}]
+      (if (and (contains? query :native) (limit-native-query? database) (clojure.string/includes? (clojure.string/lower-case (get-in query[:native :query])) "select"))
+        (let [context (get-in query [:info :context])
+              query (update-in query[:native] assoc :original_query (get-in query[:native :query]))
+              raw_query (clojure.string/replace (get-in query[:native :query]) #"[ ;]*$" "" )
+              limit (if(adhoc-or-question? context) (atom 10000) (atom 100000))]
+             (if-not (re-find #"(?i)limit " raw_query)
+                     (update-in query[:native] assoc :query (str raw_query " limit " @limit ))
+                     query
+             )
+             )
+        query
+        )
+      )
 
 (defn process-userland-query
   "Do extra handling 'userland' queries (i.e. ones ran as a result of a user action, e.g. an API call, scheduled Pulse,
   etc.). This includes recording QueryExecution entries and returning the results in an FE-client-friendly format."
   [qp]
   (fn [query rff {:keys [raisef], :as context}]
-    (let [query          (assoc-in query [:info :query-hash] (qputil/query-hash query))
+    (let [query (add-limit-query query)
+          query (assoc-in query [:info :query-hash] (qputil/query-hash query))
           execution-info (query-execution-info query)]
+      (log/debug "Original query:\n %s -> Limit query:\n %s " (get-in query[:native :original_query]) (get-in query[:native :query]))
       (letfn [(rff* [metadata]
                 (add-and-save-execution-info-xform! metadata execution-info (rff metadata)))
               (raisef* [^Throwable e context]
