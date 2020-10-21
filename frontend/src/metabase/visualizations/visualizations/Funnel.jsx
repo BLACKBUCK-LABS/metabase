@@ -23,7 +23,7 @@ import LegendHeader from "../components/LegendHeader";
 import _ from "underscore";
 import cx from "classnames";
 
-import type { VisualizationProps } from "metabase/meta/types/Visualization";
+import type { VisualizationProps } from "metabase-types/types/Visualization";
 import { TitleLegendHeader } from "metabase/visualizations/components/TitleLegendHeader";
 
 export default class Funnel extends Component {
@@ -201,6 +201,7 @@ export default class Funnel extends Component {
           actionButtons && ( // always show action buttons if we have them
               <LegendHeader
                 className="flex-no-shrink"
+                // $FlowFixMe
                 series={series._raw || series}
                 actionButtons={actionButtons}
                 onChangeCardAndRun={onChangeCardAndRun}

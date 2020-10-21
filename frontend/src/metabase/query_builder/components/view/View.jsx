@@ -3,6 +3,7 @@ import { t } from "ttag";
 
 import cx from "classnames";
 
+import ExplicitSize from "metabase/components/ExplicitSize";
 import Popover from "metabase/components/Popover";
 import DebouncedFrame from "metabase/components/DebouncedFrame";
 import Subhead from "metabase/components/Subhead";
@@ -12,6 +13,7 @@ import NativeQueryEditor from "../NativeQueryEditor";
 import QueryVisualization from "../QueryVisualization";
 import DataReference from "../dataref/DataReference";
 import TagEditorSidebar from "../template_tags/TagEditorSidebar";
+import SnippetSidebar from "../template_tags/SnippetSidebar";
 import SavedQuestionIntroModal from "../SavedQuestionIntroModal";
 
 import AggregationPopover from "../AggregationPopover";
@@ -42,6 +44,7 @@ const DEFAULT_POPOVER_STATE = {
   breakoutPopoverTarget: null,
 };
 
+@ExplicitSize()
 export default class View extends React.Component {
   state = {
     ...DEFAULT_POPOVER_STATE,
@@ -94,9 +97,11 @@ export default class View extends React.Component {
       isShowingChartSettingsSidebar,
       isShowingSummarySidebar,
       isShowingFilterSidebar,
+      isShowingSnippetSidebar,
       queryBuilderMode,
       mode,
       fitClassNames,
+      height,
     } = this.props;
     const {
       aggregationIndex,
@@ -165,12 +170,17 @@ export default class View extends React.Component {
       ) : isNative && isShowingTemplateTagsEditor ? (
         <TagEditorSidebar
           {...this.props}
-          onClose={() => this.props.toggleTemplateTagsEditor()}
+          onClose={this.props.toggleTemplateTagsEditor}
         />
       ) : isNative && isShowingDataReference ? (
         <DataReference
           {...this.props}
-          onClose={() => this.props.toggleDataReference()}
+          onClose={this.props.toggleDataReference}
+        />
+      ) : isNative && isShowingSnippetSidebar ? (
+        <SnippetSidebar
+          {...this.props}
+          onClose={this.props.toggleSnippetSidebar}
         />
       ) : null;
 
@@ -249,10 +259,11 @@ export default class View extends React.Component {
                 "hide sm-show": isSidebarOpen,
               })}
             >
-              {query instanceof NativeQuery && (
+              {isNative && (
                 <div className="z2 hide sm-show border-bottom mb2">
                   <NativeQueryEditor
                     {...this.props}
+                    viewHeight={height}
                     isOpen={!card.dataset_query.native.query || isDirty}
                     datasetQuery={card && card.dataset_query}
                   />
@@ -317,7 +328,7 @@ export default class View extends React.Component {
                     .updateAggregation(aggregationIndex, aggregation)
                     .update(null, { run: true });
                 } else {
-                  query.addAggregation(aggregation).update(null, { run: true });
+                  query.aggregate(aggregation).update(null, { run: true });
                 }
                 this.handleClosePopover();
               }}
@@ -342,7 +353,7 @@ export default class View extends React.Component {
                     .updateBreakout(breakoutIndex, breakout)
                     .update(null, { run: true });
                 } else {
-                  query.addBreakout(breakout).update(null, { run: true });
+                  query.breakout(breakout).update(null, { run: true });
                 }
                 this.handleClosePopover();
               }}

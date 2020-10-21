@@ -9,21 +9,22 @@ export default function FilterPopoverHeader({
   showFieldPicker,
   filter,
   onFilterChange,
+  onBack,
   isSidebar,
 }) {
   const dimension = filter.dimension();
   const field = dimension.field();
+  const operator = filter.operatorName();
 
   const showOperatorSelector = !(field.isTime() || field.isDate());
   const showHeader = showFieldPicker || showOperatorSelector;
   const showOperatorSelectorOnOwnRow = isSidebar || !showFieldPicker;
 
   const setOperator = operatorName => {
-    if (filter.operator() !== operatorName) {
+    if (filter.operatorName() !== operatorName) {
       onFilterChange(filter.setOperator(operatorName));
     }
   };
-  const clearField = () => onFilterChange(null);
 
   return showHeader ? (
     <div
@@ -38,7 +39,7 @@ export default function FilterPopoverHeader({
             (field.table ? field.table.displayName() + " – " : "") +
             field.displayName()
           }
-          onBack={clearField}
+          onBack={onBack}
         />
       )}
       {showOperatorSelector && (
@@ -47,8 +48,8 @@ export default function FilterPopoverHeader({
             "ml-auto": !showOperatorSelectorOnOwnRow,
             my1: showOperatorSelectorOnOwnRow,
           })}
-          operator={filter.operatorName()}
-          operators={filter.operatorOptions()}
+          operator={operator}
+          operators={filter.filterOperators(operator)}
           onOperatorChange={setOperator}
         />
       )}

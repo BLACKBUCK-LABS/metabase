@@ -92,7 +92,7 @@ const Collections = createEntity({
       {
         name: "name",
         title: t`Name`,
-        placeholder: "My new fantastic collection",
+        placeholder: t`My new fantastic collection`,
         validate: name =>
           (!name && t`Name is required`) ||
           (name && name.length > 100 && t`Name must be 100 characters or less`),
@@ -101,7 +101,7 @@ const Collections = createEntity({
         name: "description",
         title: t`Description`,
         type: "text",
-        placeholder: "It's optional but oh, so helpful",
+        placeholder: t`It's optional but oh, so helpful`,
         normalize: description => description || null, // expected to be nil or non-empty string
       },
       {
@@ -195,7 +195,7 @@ type ExpandedCollection = {
 // given list of collections with { id, name, location } returns a map of ids to
 // expanded collection objects like { id, name, location, path, children }
 // including a root collection
-function getExpandedCollectionsById(
+export function getExpandedCollectionsById(
   collections: Collection[],
   userPersonalCollectionId: ?CollectionId,
 ): { [key: PseudoCollectionId]: ExpandedCollection } {

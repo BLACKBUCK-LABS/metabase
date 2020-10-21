@@ -15,18 +15,18 @@ import Utils from "metabase/lib/utils";
 import cx from "classnames";
 
 import Question from "metabase-lib/lib/Question";
-import type { Database } from "metabase/meta/types/Database";
-import type { TableMetadata } from "metabase/meta/types/Metadata";
-import type { DatasetQuery } from "metabase/meta/types/Card";
+import type Database from "metabase-lib/lib/metadata/Database";
+import type Table from "metabase-lib/lib/metadata/Table";
+import type { DatasetQuery } from "metabase-types/types/Card";
 
-import type { ParameterValues } from "metabase/meta/types/Parameter";
+import type { ParameterValues } from "metabase-types/types/Parameter";
 
 type Props = {
   question: Question,
   originalQuestion: Question,
   result?: Object,
   databases?: Database[],
-  tableMetadata?: TableMetadata,
+  tableMetadata?: Table,
   tableForeignKeys?: [],
   tableForeignKeyReferences?: {},
   onUpdateVisualizationSettings: any => void,
@@ -39,6 +39,7 @@ type Props = {
   isAdmin: boolean,
   isResultDirty: boolean,
   isObjectDetail: boolean,
+  isNativeEditorOpen: boolean,
   runQuestionQuery: any => void,
   cancelQuery?: any => void,
   className: string,
@@ -95,6 +96,7 @@ export default class QueryVisualization extends Component {
       isRunning,
       isObjectDetail,
       isResultDirty,
+      isNativeEditorOpen,
       result,
     } = this.props;
 
@@ -103,7 +105,7 @@ export default class QueryVisualization extends Component {
         {isRunning ? <VisualizationRunningState className="spread z2" /> : null}
         <VisualizationDirtyState
           {...this.props}
-          hidden={!isResultDirty || isRunning}
+          hidden={!isResultDirty || isRunning || isNativeEditorOpen}
           className="spread z2"
         />
         {!isObjectDetail && (
@@ -119,9 +121,7 @@ export default class QueryVisualization extends Component {
             "Visualization--loading": isRunning,
           })}
         >
-          {result && result.error && isResultDirty ? null : result &&
-            result.error &&
-            !isResultDirty ? (
+          {result && result.error ? (
             <VisualizationError
               className="spread"
               error={result.error}
@@ -145,9 +145,9 @@ export default class QueryVisualization extends Component {
 }
 
 export const VisualizationEmptyState = ({ className }) => (
-  <div
-    className={cx(className, "flex flex-column layout-centered text-light")}
-  />
+  <div className={cx(className, "flex flex-column layout-centered text-light")}>
+    <h3>{t`Here's where your results will appear`}</h3>
+  </div>
 );
 
 export const VisualizationRunningState = ({ className }) => (
@@ -186,12 +186,11 @@ export const VisualizationDirtyState = ({
       py={2}
       px={3}
       result={result}
-      isRunnable={isRunnable}
+      hidden={!isRunnable || hidden}
       isRunning={isRunning}
       isDirty={isResultDirty}
       onRun={() => runQuestionQuery({ ignoreCache: true })}
       onCancel={() => cancelQuery()}
-      hidden={hidden}
     />
   </div>
 );

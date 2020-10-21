@@ -12,7 +12,7 @@ import type {
   ClickAction,
   ClickActionProps,
   ClickActionPopoverProps,
-} from "metabase/meta/types/Visualization";
+} from "metabase-types/types/Visualization";
 
 export default function QuickFilterDrill({
   question,
@@ -48,7 +48,7 @@ export default function QuickFilterDrill({
           onClose={onClose}
           onChangeFilter={filter => {
             const nextCard = query
-              .addFilter(filter)
+              .filter(filter)
               .question()
               .card();
             onChangeCardAndRun({ nextCard });

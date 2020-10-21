@@ -77,12 +77,6 @@
   (u/prog1 field
     (check-valid-types field)))
 
-(defn- pre-delete [{:keys [id]}]
-  (db/delete! Field :parent_id id)
-  (db/delete! 'FieldValues :field_id id)
-  (db/delete! 'MetricImportantField :field_id id))
-
-
 ;;; Field permissions
 ;; There are several API endpoints where large instances can return many thousands of Fields. Normally Fields require
 ;; a DB call to fetch information about their Table, because a Field's permissions set is the same as its parent
@@ -129,8 +123,8 @@
   "When fingerprinting decimal columns, NaN and Infinity values are possible. Serializing these values to JSON just
   yields a string, not a value double. This function will attempt to coerce any of those values to double objects"
   [fingerprint]
-  (u/update-in-when fingerprint [:type :type/Number]
-                    (partial m/map-vals maybe-parse-special-numeric-values)))
+  (m/update-existing-in fingerprint [:type :type/Number]
+                        (partial m/map-vals maybe-parse-special-numeric-values)))
 
 (models/add-type! :json-for-fingerprints
   :in  i/json-in
@@ -144,14 +138,12 @@
           :types          (constantly {:base_type        :keyword
                                        :special_type     :keyword
                                        :visibility_type  :keyword
-                                       :description      :clob
                                        :has_field_values :keyword
                                        :fingerprint      :json-for-fingerprints
                                        :settings         :json})
           :properties     (constantly {:timestamped? true})
           :pre-insert     pre-insert
-          :pre-update     pre-update
-          :pre-delete     pre-delete})
+          :pre-update     pre-update})
 
   i/IObjectPermissions
   (merge i/IObjectPermissionsDefaults
@@ -297,4 +289,4 @@
   "Is field a UNIX timestamp?"
   [{:keys [base_type special_type]}]
   (and (isa? base_type :type/Integer)
-       (isa? special_type :type/DateTime)))
+       (isa? special_type :type/Temporal)))

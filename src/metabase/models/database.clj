@@ -38,20 +38,10 @@
   "Unschedule any currently pending sync operation tasks for `database`."
   [database]
   (try
-    (classloader/the-classloader)
     (classloader/require 'metabase.task.sync-databases)
     ((resolve 'metabase.task.sync-databases/unschedule-tasks-for-db!) database)
     (catch Throwable e
       (log/error e (trs "Error unscheduling tasks for DB.")))))
-
-(defn- destroy-qp-thread-pool!
-  [database]
-  (try
-    (classloader/the-classloader)
-    (classloader/require 'metabase.query-processor.middleware.async-wait)
-    ((resolve 'metabase.query-processor.middleware.async-wait/destroy-thread-pool!) database)
-    (catch Throwable e
-      (log/error e (trs "Error destroying thread pool for DB.")))))
 
 (defn- post-insert [database]
   (u/prog1 database
@@ -67,11 +57,11 @@
 
 (defn- pre-delete [{id :id, driver :engine, :as database}]
   (unschedule-tasks! database)
-  (destroy-qp-thread-pool! database)
-  (db/delete! 'Card        :database_id id)
-  (db/delete! 'Permissions :object      [:like (str (perms/object-path id) "%")])
-  (db/delete! 'Table       :db_id       id)
-  (driver/notify-database-updated driver database))
+  (db/delete! 'Permissions :object [:like (str (perms/object-path id) "%")])
+  (try
+    (driver/notify-database-updated driver database)
+    (catch Throwable e
+      (log/error e (trs "Error sending database deletion notification")))))
 
 ;; TODO - this logic would make more sense in post-update if such a method existed
 (defn- pre-update
@@ -104,7 +94,6 @@
 
 (defn- perms-objects-set [database _]
   #{(perms/object-path (u/get-id database))})
-
 
 (u/strict-extend (class Database)
   models/IModel
@@ -144,14 +133,14 @@
                         {:modifiers [:DISTINCT]}))))
 
 (defn pk-fields
-  "Return all the primary key `Fields` associated with this DATABASE."
+  "Return all the primary key `Fields` associated with this `database`."
   [{:keys [id]}]
   (let [table-ids (db/select-ids 'Table, :db_id id, :active true)]
     (when (seq table-ids)
       (db/select 'Field, :table_id [:in table-ids], :special_type (mdb/isa :type/PK)))))
 
 (defn schema-exists?
-  "Does DATABASE have any tables with SCHEMA?"
+  "Does `database` have any tables with `schema`?"
   ^Boolean [{:keys [id]}, schema]
   (db/exists? 'Table :db_id id, :schema (some-> schema name)))
 

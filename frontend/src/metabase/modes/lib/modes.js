@@ -9,7 +9,7 @@ import PivotMode from "../components/modes/PivotMode";
 import NativeMode from "../components/modes/NativeMode";
 import DefaultMode from "../components/modes/DefaultMode";
 
-import type { QueryMode } from "metabase/meta/types/Visualization";
+import type { QueryMode } from "metabase-types/types/Visualization";
 
 import type Question from "metabase-lib/lib/Question";
 
@@ -33,21 +33,23 @@ export function getMode(question: ?Question): ?QueryMode {
     const filters = query.filters();
 
     if (aggregations.length === 0 && breakouts.length === 0) {
-      const isPKFilter = filter => {
+      const isPKFilterWithOneID = filter => {
         if (filter.isFieldFilter()) {
           const field = filter.field();
           if (
             field &&
             field.isPK() &&
             field.table &&
-            field.table.id === query.sourceTableId()
+            field.table.id === query.sourceTableId() &&
+            filter.operatorName() === "=" &&
+            filter.arguments().length === 1
           ) {
             return true;
           }
         }
         return false;
       };
-      if (filters.some(isPKFilter)) {
+      if (filters.some(isPKFilterWithOneID)) {
         return ObjectMode;
       } else {
         return SegmentMode;

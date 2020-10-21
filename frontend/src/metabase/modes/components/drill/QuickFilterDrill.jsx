@@ -9,12 +9,12 @@ import StructuredQuery from "metabase-lib/lib/queries/StructuredQuery";
 import type {
   ClickAction,
   ClickActionProps,
-} from "metabase/meta/types/Visualization";
+} from "metabase-types/types/Visualization";
 
 function getFiltersForColumn(column) {
   if (
     isa(column.base_type, TYPE.Number) ||
-    isa(column.base_type, TYPE.DateTime)
+    isa(column.base_type, TYPE.Temporal)
   ) {
     return [
       { name: "<", operator: "<" },
@@ -37,7 +37,7 @@ export default function QuickFilterDrill({
     !clicked ||
     !clicked.column ||
     clicked.column.id == null ||
-    clicked.value == undefined
+    clicked.value === undefined
   ) {
     return [];
   }

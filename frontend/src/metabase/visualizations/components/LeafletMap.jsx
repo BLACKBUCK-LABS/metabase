@@ -11,6 +11,7 @@ import "leaflet-draw";
 
 import _ from "underscore";
 
+import Question from "metabase-lib/lib/Question";
 import { updateLatLonFilter } from "metabase/modes/lib/actions";
 
 export default class LeafletMap extends Component {
@@ -46,7 +47,7 @@ export default class LeafletMap extends Component {
 
       map.setView([0, 0], 8);
 
-      const mapTileUrl = MetabaseSettings.get("map_tile_server_url");
+      const mapTileUrl = MetabaseSettings.get("map-tile-server-url");
       const mapTileAttribution =
         mapTileUrl.indexOf("openstreetmap.org") >= 0
           ? 'Map data © <a href="http://openstreetmap.org">OpenStreetMap</a> contributors'
@@ -131,7 +132,7 @@ export default class LeafletMap extends Component {
         },
       ],
       settings,
-      setCardAndRun,
+      onChangeCardAndRun,
     } = this.props;
 
     const latitudeColumn = _.findWhere(cols, {
@@ -141,9 +142,18 @@ export default class LeafletMap extends Component {
       name: settings["map.longitude_column"],
     });
 
-    setCardAndRun(
-      updateLatLonFilter(card, latitudeColumn, longitudeColumn, bounds),
-    );
+    const question = new Question(card);
+    if (question.isStructured()) {
+      const nextCard = updateLatLonFilter(
+        question.query(),
+        latitudeColumn,
+        longitudeColumn,
+        bounds,
+      )
+        .question()
+        .card();
+      onChangeCardAndRun({ nextCard });
+    }
 
     this.props.onFiltering(false);
   };

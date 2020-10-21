@@ -5,15 +5,17 @@ declare var ace: any;
 
 import { createAction } from "redux-actions";
 import _ from "underscore";
-import { assocIn, updateIn } from "icepick";
+import { getIn, assocIn, updateIn } from "icepick";
 
 import * as Urls from "metabase/lib/urls";
 
 import { createThunkAction } from "metabase/lib/redux";
 import { push, replace } from "react-router-redux";
 import { setErrorPage } from "metabase/redux/app";
+import { loadMetadataForQuery } from "metabase/redux/metadata";
 
 import MetabaseAnalytics from "metabase/lib/analytics";
+import { startTimer } from "metabase/lib/performance";
 import {
   loadCard,
   startNewCard,
@@ -44,6 +46,9 @@ import {
   getQueryBuilderMode,
   getIsShowingTemplateTagsEditor,
   getIsRunning,
+  getNativeEditorCursorOffset,
+  getNativeEditorSelectedText,
+  getSnippetCollectionId,
 } from "./selectors";
 
 import { MetabaseApi, CardApi, UserApi } from "metabase/services";
@@ -53,17 +58,18 @@ import querystring from "querystring";
 
 import StructuredQuery from "metabase-lib/lib/queries/StructuredQuery";
 import NativeQuery from "metabase-lib/lib/queries/NativeQuery";
+import { getSensibleDisplays } from "metabase/visualizations";
 import { getCardAfterVisualizationClick } from "metabase/visualizations/lib/utils";
 import { getPersistableDefaultSettingsForSeries } from "metabase/visualizations/lib/settings/visualization";
 
 import Questions from "metabase/entities/questions";
-import Tables from "metabase/entities/tables";
 import Databases from "metabase/entities/databases";
+import Snippets from "metabase/entities/snippets";
 
 import { getMetadata } from "metabase/selectors/metadata";
-import { clearRequestState } from "metabase/redux/requests";
+import { setRequestUnloaded } from "metabase/redux/requests";
 
-import type { Card } from "metabase/meta/types/Card";
+import type { Card } from "metabase-types/types/Card";
 
 type UiControls = {
   isEditing?: boolean,
@@ -75,9 +81,11 @@ type UiControls = {
 
 const PREVIEW_RESULT_LIMIT = 10;
 
-const getTemplateTagCount = (question: Question) => {
+const getTemplateTagWithoutSnippetsCount = (question: Question) => {
   const query = question.query();
-  return query instanceof NativeQuery ? query.templateTags().length : 0;
+  return query instanceof NativeQuery
+    ? query.templateTagsWithoutSnippets().length
+    : 0;
 };
 
 export const SET_UI_CONTROLS = "metabase/qb/SET_UI_CONTROLS";
@@ -129,6 +137,7 @@ export const POP_STATE = "metabase/qb/POP_STATE";
 export const popState = createThunkAction(
   POP_STATE,
   location => async (dispatch, getState) => {
+    dispatch(cancelQuery());
     const card = getCard(getState());
     if (location.state && location.state.card) {
       if (!Utils.equals(card, location.state.card)) {
@@ -216,9 +225,9 @@ export const updateUrl = createThunkAction(
       card = getCard(getState());
       question = getQuestion(getState());
     } else {
-      question = new Question(getMetadata(getState()), card);
+      question = new Question(card, getMetadata(getState()));
     }
-    if (dirty == undefined) {
+    if (dirty == null) {
       const originalQuestion = getOriginalQuestion(getState());
       dirty =
         !originalQuestion ||
@@ -264,7 +273,7 @@ export const updateUrl = createThunkAction(
       return;
     }
 
-    if (replaceState == undefined) {
+    if (replaceState == null) {
       // if the serialized card is identical replace the previous state instead of adding a new one
       // e.x. when saving a new card we want to replace the state and URL with one with the new card ID
       replaceState = isSameCard && isSameMode;
@@ -297,6 +306,10 @@ export const initializeQB = (location, params) => {
     dispatch(resetQB());
     dispatch(cancelQuery());
 
+    // preload metadata that's used in DataSelector
+    dispatch(Databases.actions.fetchList({ include: "tables" }));
+    dispatch(Databases.actions.fetchList({ saved: true }));
+
     const { currentUser } = getState();
 
     let card, originalCard;
@@ -305,24 +318,6 @@ export const initializeQB = (location, params) => {
       isShowingTemplateTagsEditor: false,
       queryBuilderMode: getQueryBuilderModeFromLocation(location),
     };
-
-    // always start the QB by loading up the databases for the application
-    try {
-      await dispatch(
-        Databases.actions.fetchList({
-          include_tables: true,
-          include_cards: true,
-        }),
-      );
-    } catch (error) {
-      console.error("error fetching dbs", error);
-      // NOTE: don't actually error if dbs can't be fetched for some reason,
-      // we may still be able to run the query
-      // NOTE: for some reason previously fetchDatabases would fall back to []
-      // if there was an API error so this would never be hit
-      // dispatch(setErrorPage(error));
-      // return { uiControls };
-    }
 
     // load up or initialize the card we'll be working on
     let options = {};
@@ -338,6 +333,7 @@ export const initializeQB = (location, params) => {
     }
 
     let preserveParameters = false;
+    let snippetFetch;
     if (params.cardId || serializedCard) {
       // existing card being loaded
       try {
@@ -358,6 +354,31 @@ export const initializeQB = (location, params) => {
           // if the cards are equal then show the original
           if (cardIsEquivalent(card, originalCard)) {
             card = Utils.copy(originalCard);
+          }
+        }
+
+        // if this card has any snippet tags we might need to fetch snippets pending permissions
+        if (
+          Object.values(
+            getIn(card, ["dataset_query", "native", "template-tags"]) || {},
+          ).filter(t => t.type === "snippet").length > 0
+        ) {
+          const dbId = card.database_id;
+          let database = Databases.selectors.getObject(getState(), {
+            entityId: dbId,
+          });
+          // if we haven't already loaded this database, block on loading dbs now so we can check write permissions
+          if (!database) {
+            await dispatch(Databases.actions.fetchList());
+            database = Databases.selectors.getObject(getState(), {
+              entityId: dbId,
+            });
+          }
+
+          // database could still be missing if the user doesn't have any permissions
+          // if the user has native permissions against this db, fetch snippets
+          if (database && database.native_permissions === "write") {
+            snippetFetch = dispatch(Snippets.actions.fetchList());
           }
         }
 
@@ -413,16 +434,16 @@ export const initializeQB = (location, params) => {
 
       // initialize parts of the query based on optional parameters supplied
       if (card.dataset_query.query) {
-        if (options.table != undefined) {
+        if (options.table != null) {
           card.dataset_query.query["source-table"] = parseInt(options.table);
         }
-        if (options.segment != undefined) {
+        if (options.segment != null) {
           card.dataset_query.query.filter = [
             "segment",
             parseInt(options.segment),
           ];
         }
-        if (options.metric != undefined) {
+        if (options.metric != null) {
           // show the summarize sidebar for metrics
           uiControls.isShowingSummarySidebar = true;
           card.dataset_query.query.aggregation = [
@@ -441,20 +462,37 @@ export const initializeQB = (location, params) => {
 
     /**** All actions are dispatched here ****/
 
+    // Fetch alerts for the current question if the question is saved
+    if (card && card.id != null) {
+      dispatch(fetchAlertsForQuestion(card.id));
+    }
+    // Fetch the question metadata (blocking)
+    if (card) {
+      await dispatch(loadMetadataForCard(card));
+    }
+
+    let question = card && new Question(card, getMetadata(getState()));
+    if (params.cardId) {
+      // loading a saved question prevents auto-viz selection
+      question = question && question.lockDisplay();
+    }
+
+    if (question && question.isNative() && snippetFetch) {
+      await snippetFetch;
+      const snippets = Snippets.selectors.getList(getState());
+      question = question.setQuery(
+        question.query().updateQueryTextWithNewSnippetNames(snippets),
+      );
+    }
+
+    card = question && question.card();
+
     // Update the question to Redux state together with the initial state of UI controls
     dispatch.action(INITIALIZE_QB, {
       card,
       originalCard,
       uiControls,
     });
-
-    // Fetch alerts for the current question if the question is saved
-    card && card.id && dispatch(fetchAlertsForQuestion(card.id));
-
-    // Fetch the question metadata
-    card && dispatch(loadMetadataForCard(card));
-
-    const question = card && new Question(getMetadata(getState()), card);
 
     // if we have loaded up a card that we can run then lets kick that off as well
     // but don't bother for "notebook" mode
@@ -501,6 +539,18 @@ export const setIsShowingTemplateTagsEditor = isShowingTemplateTagsEditor => ({
   isShowingTemplateTagsEditor,
 });
 
+export const TOGGLE_SNIPPET_SIDEBAR = "metabase/qb/TOGGLE_SNIPPET_SIDEBAR";
+export const toggleSnippetSidebar = createAction(TOGGLE_SNIPPET_SIDEBAR, () => {
+  MetabaseAnalytics.trackEvent("QueryBuilder", "Toggle Snippet Sidebar");
+});
+
+export const SET_IS_SHOWING_SNIPPET_SIDEBAR =
+  "metabase/qb/SET_IS_SHOWING_SNIPPET_SIDEBAR";
+export const setIsShowingSnippetSidebar = isShowingSnippetSidebar => ({
+  type: SET_IS_SHOWING_SNIPPET_SIDEBAR,
+  isShowingSnippetSidebar,
+});
+
 export const setIsPreviewing = isPreviewing => ({
   type: SET_UI_CONTROLS,
   payload: { isPreviewing },
@@ -510,6 +560,49 @@ export const setIsNativeEditorOpen = isNativeEditorOpen => ({
   type: SET_UI_CONTROLS,
   payload: { isNativeEditorOpen },
 });
+
+export const SET_NATIVE_EDITOR_SELECTED_RANGE =
+  "metabase/qb/SET_NATIVE_EDITOR_SELECTED_RANGE";
+export const setNativeEditorSelectedRange = createAction(
+  SET_NATIVE_EDITOR_SELECTED_RANGE,
+);
+
+export const SET_MODAL_SNIPPET = "metabase/qb/SET_MODAL_SNIPPET";
+export const setModalSnippet = createAction(SET_MODAL_SNIPPET);
+
+export const SET_SNIPPET_COLLECTION_ID =
+  "metabase/qb/SET_SNIPPET_COLLECTION_ID";
+export const setSnippetCollectionId = createAction(SET_SNIPPET_COLLECTION_ID);
+
+export const openSnippetModalWithSelectedText = () => (dispatch, getState) => {
+  const state = getState();
+  const content = getNativeEditorSelectedText(state);
+  const collection_id = getSnippetCollectionId(state);
+  dispatch(setModalSnippet({ content, collection_id }));
+};
+
+export const closeSnippetModal = () => (dispatch, getState) => {
+  dispatch(setModalSnippet(null));
+};
+
+export const insertSnippet = snip => (dispatch, getState) => {
+  const name = snip.name;
+  const question = getQuestion(getState());
+  const query = question.query();
+  const nativeEditorCursorOffset = getNativeEditorCursorOffset(getState());
+  const nativeEditorSelectedText = getNativeEditorSelectedText(getState());
+  const selectionStart =
+    nativeEditorCursorOffset - (nativeEditorSelectedText || "").length;
+  const newText =
+    query.queryText().slice(0, selectionStart) +
+    `{{snippet: ${name}}}` +
+    query.queryText().slice(nativeEditorCursorOffset);
+  const datasetQuery = query
+    .setQueryText(newText)
+    .updateSnippetsWithIds([snip])
+    .datasetQuery();
+  dispatch(updateQuestion(question.setDatasetQuery(datasetQuery)));
+};
 
 export const CLOSE_QB_NEWB_MODAL = "metabase/qb/CLOSE_QB_NEWB_MODAL";
 export const closeQbNewbModal = createThunkAction(CLOSE_QB_NEWB_MODAL, () => {
@@ -521,39 +614,10 @@ export const closeQbNewbModal = createThunkAction(CLOSE_QB_NEWB_MODAL, () => {
   };
 });
 
-// TODO Atte Keinänen 6/8/17: Could (should?) use the stored question by default instead of always requiring the explicit `card` parameter
-export const LOAD_METADATA_FOR_CARD = "metabase/qb/LOAD_METADATA_FOR_CARD";
-export const loadMetadataForCard = createThunkAction(
-  LOAD_METADATA_FOR_CARD,
-  card => {
-    return async (dispatch, getState) => {
-      // Short-circuit if we're in a weird state where the card isn't completely loaded
-      if (!card || !card.dataset_query) {
-        return;
-      }
-      const query = new Question(getMetadata(getState()), card).query();
-      if (query instanceof StructuredQuery) {
-        try {
-          const rootTable = query.rootTable();
-          if (rootTable) {
-            await Promise.all([
-              dispatch(Tables.actions.fetchTableMetadata(rootTable)),
-              dispatch(Tables.actions.fetchForeignKeys(rootTable)),
-            ]);
-          }
-          await Promise.all(
-            query
-              .dependentTableIds()
-              .map(id => dispatch(Tables.actions.fetchMetadata({ id }))),
-          );
-        } catch (e) {
-          console.error("Error loading metadata for card", e);
-          throw e;
-        }
-      }
-    };
-  },
-);
+export const loadMetadataForCard = card => (dispatch, getState) =>
+  dispatch(
+    loadMetadataForQuery(new Question(card, getMetadata(getState())).query()),
+  );
 
 function hasNewColumns(question, queryResult) {
   // NOTE: this assume column names will change
@@ -572,9 +636,11 @@ export const updateCardVisualizationSettings = settings => async (
 ) => {
   const question = getQuestion(getState());
   await dispatch(
-    updateQuestion(question.updateSettings(settings), { run: "auto" }),
+    updateQuestion(question.updateSettings(settings), {
+      run: "auto",
+      shouldUpdateUrl: true,
+    }),
   );
-  dispatch(updateUrl(null, { dirty: true }));
 };
 
 export const replaceAllCardVisualizationSettings = settings => async (
@@ -583,9 +649,11 @@ export const replaceAllCardVisualizationSettings = settings => async (
 ) => {
   const question = getQuestion(getState());
   await dispatch(
-    updateQuestion(question.setSettings(settings), { run: "auto" }),
+    updateQuestion(question.setSettings(settings), {
+      run: "auto",
+      shouldUpdateUrl: true,
+    }),
   );
-  dispatch(updateUrl(null, { dirty: true }));
 };
 
 export const UPDATE_TEMPLATE_TAG = "metabase/qb/UPDATE_TEMPLATE_TAG";
@@ -606,11 +674,19 @@ export const updateTemplateTag = createThunkAction(
         delete updatedCard.description;
       }
 
-      // using updateIn instead of assocIn due to not preserving order of keys
+      // we need to preserve the order of the keys to avoid UI jumps
       return updateIn(
         updatedCard,
         ["dataset_query", "native", "template-tags"],
-        tags => ({ ...tags, [templateTag.name]: templateTag }),
+        tags => {
+          const { name } = templateTag;
+          const newTag =
+            tags[name] && tags[name].type !== templateTag.type
+              ? // when we switch type, null out any default
+                { ...templateTag, default: null }
+              : templateTag;
+          return { ...tags, [name]: newTag };
+        },
       );
     };
   },
@@ -720,7 +796,7 @@ export const navigateToNewCardInsideQB = createThunkAction(
 export const UPDATE_QUESTION = "metabase/qb/UPDATE_QUESTION";
 export const updateQuestion = (
   newQuestion,
-  { doNotClearNameAndId = false, run = false } = {},
+  { doNotClearNameAndId = false, run = false, shouldUpdateUrl = false } = {},
 ) => {
   return async (dispatch, getState) => {
     const oldQuestion = getQuestion(getState());
@@ -749,9 +825,13 @@ export const updateQuestion = (
     // Replace the current question with a new one
     await dispatch.action(UPDATE_QUESTION, { card: newQuestion.card() });
 
+    if (shouldUpdateUrl) {
+      dispatch(updateUrl(null, { dirty: true }));
+    }
+
     // See if the template tags editor should be shown/hidden
-    const oldTagCount = getTemplateTagCount(oldQuestion);
-    const newTagCount = getTemplateTagCount(newQuestion);
+    const oldTagCount = getTemplateTagWithoutSnippetsCount(oldQuestion);
+    const newTagCount = getTemplateTagWithoutSnippetsCount(newQuestion);
     if (newTagCount > oldTagCount) {
       dispatch(setIsShowingTemplateTagsEditor(true));
     } else if (
@@ -764,11 +844,11 @@ export const updateQuestion = (
     try {
       if (
         !_.isEqual(
-          oldQuestion.query().dependentTableIds(),
-          newQuestion.query().dependentTableIds(),
+          oldQuestion.query().dependentMetadata(),
+          newQuestion.query().dependentMetadata(),
         )
       ) {
-        await dispatch(loadMetadataForCard(newQuestion.card()));
+        await dispatch(loadMetadataForQuery(newQuestion.query()));
       }
 
       // setDefaultQuery requires metadata be loaded, need getQuestion to use new metadata
@@ -781,6 +861,7 @@ export const updateQuestion = (
       }
     } catch (e) {
       // this will fail if user doesn't have data permissions but thats ok
+      console.warn("Couldn't load metadata", e);
     }
 
     // run updated query
@@ -817,7 +898,7 @@ export const apiCreateQuestion = question => {
     // remove the databases in the store that are used to populate the QB databases list.
     // This is done when saving a Card because the newly saved card will be eligible for use as a source query
     // so we want the databases list to be re-fetched next time we hit "New Question" so it shows up
-    dispatch(clearRequestState({ statePath: ["entities", "databases"] }));
+    dispatch(setRequestUnloaded(["entities", "databases"]));
 
     dispatch(updateUrl(createdQuestion.card(), { dirty: false }));
     MetabaseAnalytics.trackEvent(
@@ -826,7 +907,11 @@ export const apiCreateQuestion = question => {
       createdQuestion.query().datasetQuery().type,
     );
 
-    dispatch.action(API_CREATE_QUESTION, createdQuestion.card());
+    // Saving a card, locks in the current display as though it had been
+    // selected in the UI.
+    const card = createdQuestion.lockDisplay().card();
+
+    dispatch.action(API_CREATE_QUESTION, card);
   };
 };
 
@@ -854,7 +939,7 @@ export const apiUpdateQuestion = question => {
     // remove the databases in the store that are used to populate the QB databases list.
     // This is done when saving a Card because the newly saved card will be eligible for use as a source query
     // so we want the databases list to be re-fetched next time we hit "New Question" so it shows up
-    dispatch(clearRequestState({ statePath: ["entities", "databases"] }));
+    dispatch(setRequestUnloaded(["entities", "databases"]));
 
     dispatch(updateUrl(updatedQuestion.card(), { dirty: false }));
     MetabaseAnalytics.trackEvent(
@@ -883,8 +968,8 @@ export const runQuestionQuery = ({
   overrideWithCard,
 }: RunQueryParams = {}) => {
   return async (dispatch, getState) => {
-    const questionFromCard = (c: Card): Question =>
-      c && new Question(getMetadata(getState()), c);
+    const questionFromCard = (card: Card): Question =>
+      card && new Question(card, getMetadata(getState()));
 
     let question: Question = overrideWithCard
       ? questionFromCard(overrideWithCard)
@@ -912,22 +997,26 @@ export const runQuestionQuery = ({
     const startTime = new Date();
     const cancelQueryDeferred = defer();
 
+    const queryTimer = startTimer();
+
     question
       .apiGetResults({
         cancelDeferred: cancelQueryDeferred,
         ignoreCache: ignoreCache,
         isDirty: cardIsDirty,
       })
-      .then(queryResults =>
-        dispatch(queryCompleted(question.card(), queryResults)),
-      )
+      .then(queryResults => {
+        queryTimer(duration =>
+          MetabaseAnalytics.trackEvent(
+            "QueryBuilder",
+            "Run Query",
+            question.query().datasetQuery().type,
+            duration,
+          ),
+        );
+        return dispatch(queryCompleted(question, queryResults));
+      })
       .catch(error => dispatch(queryErrored(startTime, error)));
-
-    MetabaseAnalytics.trackEvent(
-      "QueryBuilder",
-      "Run Query",
-      question.query().datasetQuery().type,
-    );
 
     // TODO Move this out from Redux action asap
     // HACK: prevent SQL editor from losing focus
@@ -942,50 +1031,24 @@ export const runQuestionQuery = ({
 export const CLEAR_QUERY_RESULT = "metabase/query_builder/CLEAR_QUERY_RESULT";
 export const clearQueryResult = createAction(CLEAR_QUERY_RESULT);
 
-const getDisplayTypeForCard = (card, queryResults) => {
-  // TODO Atte Keinänen 6/1/17: Make a holistic decision based on all queryResults, not just one
-  // This method seems to has been a candidate for a rewrite anyway
-  const queryResult = queryResults[0];
-
-  let cardDisplay = card.display;
-
-  // try a little logic to pick a smart display for the data
-  // TODO: less hard-coded rules for picking chart type
-  const isScalarVisualization =
-    card.display === "scalar" ||
-    card.display === "progress" ||
-    card.display === "gauge";
-  if (
-    !isScalarVisualization &&
-    queryResult.data.rows &&
-    queryResult.data.rows.length === 1 &&
-    queryResult.data.cols.length === 1
-  ) {
-    // if we have a 1x1 data result then this should always be viewed as a scalar
-    cardDisplay = "scalar";
-  } else if (
-    isScalarVisualization &&
-    queryResult.data.rows &&
-    (queryResult.data.rows.length > 1 || queryResult.data.cols.length > 1)
-  ) {
-    // any time we were a scalar and now have more than 1x1 data switch to table view
-    cardDisplay = "table";
-  } else if (!card.display) {
-    // if our query aggregation is "rows" then ALWAYS set the display to "table"
-    cardDisplay = "table";
-  }
-
-  return cardDisplay;
-};
-
 export const QUERY_COMPLETED = "metabase/qb/QUERY_COMPLETED";
-export const queryCompleted = (card, queryResults) => {
+export const queryCompleted = (question, queryResults) => {
   return async (dispatch, getState) => {
-    dispatch.action(QUERY_COMPLETED, {
-      card,
-      cardDisplay: getDisplayTypeForCard(card, queryResults),
-      queryResults,
-    });
+    const [{ data }] = queryResults;
+    const originalQuestion = getOriginalQuestion(getState());
+    const dirty =
+      !originalQuestion ||
+      (originalQuestion && question.isDirtyComparedTo(originalQuestion));
+    if (dirty) {
+      // Only update the display if the question is new or has been changed.
+      // Otherwise, trust that the question was saved with the correct display.
+      question = question
+        // if we are going to trigger autoselection logic, check if the locked display no longer is "sensible".
+        .maybeUnlockDisplay(getSensibleDisplays(data))
+        .setDefaultDisplay()
+        .switchTableScalar(data);
+    }
+    dispatch.action(QUERY_COMPLETED, { card: question.card(), queryResults });
   };
 };
 
@@ -1064,7 +1127,6 @@ export const followForeignKey = createThunkAction(FOLLOW_FOREIGN_KEY, fk => {
     const newCard = startNewCard("query", card.dataset_query.database);
 
     newCard.dataset_query.query["source-table"] = fk.origin.table.id;
-    newCard.dataset_query.query.aggregation = ["rows"];
     newCard.dataset_query.query.filter = [
       "and",
       ["=", fk.origin.id, originValue],

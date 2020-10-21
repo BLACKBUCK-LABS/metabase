@@ -20,8 +20,7 @@
              [config :as config]
              [db :as mdb]
              [util :as u]]
-            [metabase.plugins.classloader :as classloader]
-            [metabase.util.date :as du]))
+            [metabase.plugins.classloader :as classloader]))
 
 (defn ^:command migrate
   "Run database migrations. Valid options for `direction` are `up`, `force`, `down-one`, `print`, or `release-locks`."
@@ -37,13 +36,25 @@
    (binding [mdb/*disable-data-migrations* true]
      ((resolve 'metabase.cmd.load-from-h2/load-from-h2!) h2-connection-string))))
 
+(defn ^:command dump-to-h2
+  "Transfer data from existing database to newly created H2 DB with specified filename.
+
+  Target H2 file is deleted before dump, unless the --keep-existing flag is given."
+  [h2-filename & opts]
+  (classloader/require 'metabase.cmd.dump-to-h2)
+  (binding [mdb/*disable-data-migrations* true]
+    (let [keep-existing (boolean (some #{"--keep-existing"} opts))
+          return-code   ((resolve 'metabase.cmd.dump-to-h2/dump-to-h2!) h2-filename keep-existing)]
+      (when (pos-int? return-code)
+        (System/exit return-code)))))
+
 (defn ^:command profile
   "Start Metabase the usual way and exit. Useful for profiling Metabase launch time."
   []
   ;; override env var that would normally make Jetty block forever
   (classloader/require 'environ.core 'metabase.core)
   (alter-var-root #'environ.core/env assoc :mb-jetty-join "false")
-  (du/profile "start-normally" ((resolve 'metabase.core/start-normally))))
+  (u/profile "start-normally" ((resolve 'metabase.core/start-normally))))
 
 (defn ^:command reset-password
   "Reset the password for a user with `email-address`."

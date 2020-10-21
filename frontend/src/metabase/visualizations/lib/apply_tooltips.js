@@ -11,7 +11,17 @@ import { getFriendlyName } from "./utils";
 
 export function getClickHoverObject(
   d,
-  { series, isNormalized, seriesIndex, seriesTitle, classList, event, element },
+  {
+    series,
+    datas,
+    isNormalized,
+    seriesIndex,
+    seriesTitle,
+    classList,
+    event,
+    element,
+    settings,
+  },
 ) {
   let { cols } = series[0].data;
   const { card } = series[seriesIndex];
@@ -74,18 +84,8 @@ export function getClickHoverObject(
 
     // We look through the rows to match up they key in d.data to the x value
     // from some row.
-    const row = seriesData.rows.find(([x]) =>
-      moment.isMoment(key)
-        ? // for dates, we check two things:
-          // 1. does parsing x produce an equivalent moment value?
-          key.isSame(moment(x)) ||
-          // 2. if not, we format the key using the column info
-          // this catches values like years that don't parse correctly above
-          formatValue(key, { column: rawCols[0] }) === String(x)
-        : // otherwise, we just check if the string value matches
-          // we also format null so it matches a key displayed as "(empty)"
-          // e.g. String("123") === String(123)
-          String(formatNull(x)) === String(key),
+    const row = datas[seriesIndex].find(
+      ([x]) => key === x || (moment.isMoment(key) && key.isSame(x)),
     );
 
     // try to get row from _origin but fall back to the row we already have
@@ -173,6 +173,7 @@ export function getClickHoverObject(
     dimensions,
     value,
     column,
+    settings,
   };
 }
 
@@ -216,11 +217,13 @@ export function setupTooltips(
       seriesTitle,
       seriesIndex,
       series,
+      datas,
       isNormalized: normalized,
       isScalarSeries,
       isStacked: stacked,
       event: d3.event,
       element: target,
+      settings,
     });
   };
 

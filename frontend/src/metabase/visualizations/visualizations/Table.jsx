@@ -10,6 +10,7 @@ import { findColumnIndexForColumnSetting } from "metabase/lib/dataset";
 import { getOptionFromColumn } from "metabase/visualizations/lib/settings/utils";
 import { getColumnCardinality } from "metabase/visualizations/lib/utils";
 import { formatColumn } from "metabase/lib/formatting";
+import { PLUGIN_TABLE_COLUMN_SETTINGS } from "metabase/plugins";
 
 import * as Q_DEPRECATED from "metabase/lib/query";
 import {
@@ -22,6 +23,7 @@ import {
   isImageURL,
   isAvatarURL,
 } from "metabase/lib/schema_metadata";
+
 import ChartSettingOrderedColumns from "metabase/visualizations/components/settings/ChartSettingOrderedColumns";
 import ChartSettingsTableFormatting, {
   isFormattable,
@@ -36,9 +38,9 @@ import cx from "classnames";
 import RetinaImage from "react-retina-image";
 import { getIn } from "icepick";
 
-import type { DatasetData } from "metabase/meta/types/Dataset";
-import type { VisualizationSettings } from "metabase/meta/types/Card";
-import type { Series } from "metabase/meta/types/Visualization";
+import type { DatasetData } from "metabase-types/types/Dataset";
+import type { VisualizationSettings } from "metabase-types/types/Card";
+import type { Series } from "metabase-types/types/Visualization";
 import type { SettingDefs } from "metabase/visualizations/lib/settings";
 
 type Props = {
@@ -176,6 +178,7 @@ export default class Table extends Component {
       ]) =>
         cols.map(col => ({
           name: col.name,
+          fieldRef: col.field_ref,
           enabled: col.visibility_type !== "details-only",
         })),
       getProps: ([
@@ -283,6 +286,11 @@ export default class Table extends Component {
           settings["view_as"] !== "email_link",
       };
     }
+
+    for (const getSettings of PLUGIN_TABLE_COLUMN_SETTINGS) {
+      Object.assign(settings, getSettings(column));
+    }
+
     return settings;
   };
 

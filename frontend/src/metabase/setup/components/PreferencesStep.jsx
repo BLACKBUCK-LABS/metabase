@@ -11,6 +11,8 @@ import StepTitle from "./StepTitle";
 import CollapsedStep from "./CollapsedStep";
 
 export default class PreferencesStep extends Component {
+  state = { errorMessage: null };
+
   static propTypes = {
     stepNumber: PropTypes.number.isRequired,
     activeStep: PropTypes.number.isRequired,
@@ -32,7 +34,11 @@ export default class PreferencesStep extends Component {
     e.preventDefault();
 
     // okay, this is the big one.  we actually submit everything to the api now and complete the process.
-    this.props.submitSetup();
+    const { payload } = await this.props.submitSetup();
+    // a successful payload is null
+    const errorMessage =
+      payload && payload.data ? getErrorMessage(payload.data) : null;
+    this.setState({ errorMessage });
 
     MetabaseAnalytics.trackEvent(
       "Setup",
@@ -59,9 +65,12 @@ export default class PreferencesStep extends Component {
 
     if (activeStep !== stepNumber || setupComplete) {
       return (
+        // The -1 is here because we don't display a number for the optional
+        // database scheduling step. So this is the 5th possible step, but
+        // only the 4th numbered step.
         <CollapsedStep
           stepNumber={stepNumber}
-          stepCircleText="3"
+          stepCircleText={String(stepNumber - 1)}
           stepText={stepText}
           isCompleted={setupComplete}
           setActiveStep={setActiveStep}
@@ -73,7 +82,7 @@ export default class PreferencesStep extends Component {
           p={4}
           className="SetupStep bg-white rounded full relative SetupStep--active"
         >
-          <StepTitle title={stepText} circleText={"3"} />
+          <StepTitle title={stepText} circleText={String(stepNumber - 1)} />
           <form onSubmit={this.formSubmitted.bind(this)} noValidate>
             <div className="Form-field">
               {t`In order to help us improve Metabase, we'd like to collect certain data about usage through Google Analytics.`}{" "}
@@ -93,8 +102,11 @@ export default class PreferencesStep extends Component {
                   value={allowTracking}
                   onChange={this.toggleTracking.bind(this)}
                   className="inline-block"
+                  aria-labelledby="anonymous-usage-events-label"
                 />
-                <span className="ml1">{t`Allow Metabase to anonymously collect usage events`}</span>
+                <span className="ml1" id="anonymous-usage-events-label">
+                  {t`Allow Metabase to anonymously collect usage events`}
+                </span>
               </div>
             </div>
 
@@ -113,10 +125,24 @@ export default class PreferencesStep extends Component {
             <div className="Form-actions">
               <button className="Button Button--primary">{t`Next`}</button>
               {/* FIXME: <mb-form-message form="usageForm"></mb-form-message>*/}
+              {this.state.errorMessage && (
+                <div className="text-error ml1">{this.state.errorMessage}</div>
+              )}
             </div>
           </form>
         </Box>
       );
     }
   }
+}
+
+function getErrorMessage(data) {
+  const { errors, message } = data;
+  if (message) {
+    return message;
+  }
+  if (errors) {
+    return Object.values(errors)[0];
+  }
+  return null;
 }

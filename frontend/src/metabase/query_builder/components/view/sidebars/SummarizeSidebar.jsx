@@ -10,7 +10,6 @@ import { color, alpha } from "metabase/lib/colors";
 
 import SidebarContent from "metabase/query_builder/components/SidebarContent";
 import AggregationPopover from "metabase/query_builder/components/AggregationPopover";
-import AggregationName from "metabase/query_builder/components/AggregationName";
 
 import DimensionList from "metabase/query_builder/components/DimensionList";
 
@@ -50,7 +49,7 @@ export default class SummarizeSidebar extends React.Component {
     const addDefaultAggregation =
       !this.state.modified && !query.hasAggregations();
     if (addDefaultAggregation) {
-      query = query.addAggregation(["count"]);
+      query = query.aggregate(["count"]);
     }
     return (
       <SidebarContent
@@ -96,7 +95,7 @@ const SummarizeAggregation = ({ className, aggregation, index, query }) => {
         triggerClasses="flex-full"
         triggerElement={
           <AggregationToken color={color("summarize")}>
-            <AggregationName className="ml1" aggregation={aggregation} />
+            <span className="ml1">{aggregation.displayName()}</span>
             {aggregation.canRemove() && (
               <Icon
                 className="flex ml-auto faded fade-in-hover"
@@ -173,7 +172,7 @@ const SummarizeAggregationAdd = ({ className, query }) => {
         <AggregationPopover
           query={query}
           onChangeAggregation={newAggregation => {
-            updateAndRun(query.addAggregation(newAggregation));
+            updateAndRun(query.aggregate(newAggregation));
             onClose();
           }}
           onClose={onClose}
@@ -199,11 +198,11 @@ const SummarizeBreakouts = ({ className, query }) => {
         if (index >= 0) {
           updateAndRun(query.updateBreakout(index, dimension.mbql()));
         } else {
-          updateAndRun(query.clearBreakouts().addBreakout(dimension.mbql()));
+          updateAndRun(query.clearBreakouts().breakout(dimension.mbql()));
         }
       }}
       onAddDimension={dimension => {
-        updateAndRun(query.addBreakout(dimension.mbql()));
+        updateAndRun(query.breakout(dimension.mbql()));
       }}
       onRemoveDimension={dimension => {
         for (const [index, existing] of dimensions.entries()) {

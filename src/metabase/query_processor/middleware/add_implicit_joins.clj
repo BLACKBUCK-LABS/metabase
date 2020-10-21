@@ -12,7 +12,9 @@
             [metabase.models
              [field :refer [Field]]
              [table :refer [Table]]]
-            [metabase.query-processor.store :as qp.store]
+            [metabase.query-processor
+             [error-type :as error-type]
+             [store :as qp.store]]
             [metabase.util
              [i18n :refer [tru]]
              [schema :as su]]
@@ -108,7 +110,10 @@
           info))
       infos)
      (throw
-      (ex-info (tru "No matching info found.")
+      (ex-info (tru "No matching info found for join against Table {0} ''{1}'' on Field {2} ''{3}'' via FK {4} ''{5}''"
+                    dest-table-id (or (u/ignore-exceptions (:name (qp.store/table dest-table-id))) "?")
+                    dest-id (or (u/ignore-exceptions (:name (qp.store/field dest-id))) "?")
+                    fk-id (or (u/ignore-exceptions (:name (qp.store/field fk-id))) "?"))
         {:fk-id fk-id, :dest-id dest-id, :dest-table-id dest-table-id})))))
 
 (defn- matching-info-fn
@@ -224,11 +229,10 @@
     (do
       (when-not (driver/supports? driver/*driver* :foreign-keys)
         (throw (ex-info (tru "{0} driver does not support foreign keys." driver/*driver*)
-                 {:driver driver/*driver*})))
+                 {:driver driver/*driver*
+                  :type   error-type/unsupported-feature})))
       (update query :query resolve-fk-clauses))
     query))
-
-
 
 (defn add-implicit-joins
   "Fetch and store any Tables other than the source Table referred to by `fk->` clauses in an MBQL query, and add a
@@ -237,4 +241,5 @@
 
   This middleware also replaces all `fk->` clauses with `joined-field` clauses, which are easier to work with."
   [qp]
-  (comp qp add-implicit-joins*))
+  (fn [query rff context]
+    (qp (add-implicit-joins* query) rff context)))

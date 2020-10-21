@@ -13,6 +13,8 @@
              [interface :as i]
              [permissions-group :as group]
              [permissions-revision :as perms-revision :refer [PermissionsRevision]]]
+            [metabase.models.permissions.parse :as perms-parse]
+            [metabase.plugins.classloader :as classloader]
             [metabase.util
              [honeysql-extensions :as hx]
              [i18n :as ui18n :refer [deferred-tru trs tru]]
@@ -83,7 +85,7 @@
   [{:keys [group_id]}]
   (when (and (= group_id (:id (group/admin)))
              (not *allow-admin-permissions-changes*))
-    (throw (ui18n/ex-info (tru "You cannot create or revoke permissions for the ''Admin'' group.")
+    (throw (ex-info (tru "You cannot create or revoke permissions for the ''Admin'' group.")
              {:status-code 400}))))
 
 (defn- assert-valid-object
@@ -146,7 +148,7 @@
   "Return the permissions path for *readwrite* access for a `collection-or-id`."
   [collection-or-id :- MapOrID]
   (str "/collection/"
-       (if (get collection-or-id :metabase.models.collection/is-root?)
+       (if (get collection-or-id :metabase.models.collection.root/is-root?)
          "root"
          (u/get-id collection-or-id))
        "/"))
@@ -207,23 +209,18 @@
                      (valid-object-path? path)))
                permissions-set)))
 
-
 (defn set-has-full-permissions?
   "Does `permissions-set` grant *full* access to object with `path`?"
-  {:style/indent 1}
   ^Boolean [permissions-set path]
   (boolean (some #(is-permissions-for-object? % path) permissions-set)))
 
 (defn set-has-partial-permissions?
   "Does `permissions-set` grant access full access to object with `path` *or* to a descendant of it?"
-  {:style/indent 1}
   ^Boolean [permissions-set path]
   (boolean (some #(is-partial-permissions-for-object? % path) permissions-set)))
 
-
 (s/defn set-has-full-permissions-for-set? :- s/Bool
   "Do the permissions paths in `permissions-set` grant *full* access to all the object paths in `object-paths-set`?"
-  {:style/indent 1}
   [permissions-set :- #{UserPath}, object-paths-set :- #{ObjectPath}]
   (every? (partial set-has-full-permissions? permissions-set)
           object-paths-set))
@@ -231,7 +228,6 @@
 (s/defn set-has-partial-permissions-for-set? :- s/Bool
   "Do the permissions paths in `permissions-set` grant *partial* access to all the object paths in `object-paths-set`?
    (`permissions-set` must grant partial access to *every* object in `object-paths-set` set)."
-  {:style/indent 1}
   [permissions-set :- #{UserPath}, object-paths-set :- #{ObjectPath}]
   (every? (partial set-has-partial-permissions? permissions-set)
           object-paths-set))
@@ -249,7 +245,7 @@
     ;; now pass that function our collection_id if we have one, or if not, pass it an object representing the Root
     ;; Collection
     #{(path-fn (or (:collection_id this)
-                   {:metabase.models.collection/is-root? true}))}))
+                   {:metabase.models.collection.root/is-root? true}))}))
 
 (def IObjectPermissionsForParentCollection
   "Implementation of `IObjectPermissions` for objects that have a `collection_id`, and thus, a parent Collection.
@@ -283,7 +279,6 @@
   (log/debug (u/format-color 'red "Revoking permissions for group %d: %s" (:group_id permissions) (:object permissions)))
   (assert-not-admin-group permissions))
 
-
 (u/strict-extend (class Permissions)
   models/IModel (merge models/IModelDefaults
                    {:pre-insert         pre-insert
@@ -301,10 +296,12 @@
 
 (def ^:private TablePermissionsGraph
   (s/named
-   (s/cond-pre (s/enum :none :all)
-               {:read  (s/enum :all :none)
-                :query (s/enum :all :segmented :none)})
-   "Valid perms graph for a Table"))
+    (s/cond-pre (s/enum :none :all)
+                (s/constrained
+                  {(s/optional-key :read)  (s/enum :all :none)
+                   (s/optional-key :query) (s/enum :all :segmented :none)}
+                  not-empty))
+    "Valid perms graph for a Table"))
 
 (def ^:private SchemaPermissionsGraph
   (s/named
@@ -368,72 +365,29 @@
 ;;; |                                                  GRAPH FETCH                                                   |
 ;;; +----------------------------------------------------------------------------------------------------------------+
 
-(defn- permissions-for-path
-  "Given a `permissions-set` of all allowed permissions paths for a Group, return the corresponding permissions status
-   for an object with PATH."
-  [permissions-set path]
-  (u/prog1 (cond
-             (set-has-full-permissions? permissions-set path)    :all
-             (set-has-partial-permissions? permissions-set path) :some
-             :else                                               :none)))
+(defn all-permissions
+  "Handle '/' permission"
+  [db-ids]
+  (reduce (fn [g db-id]
+            (assoc g db-id {:native  :write
+                            :schemas :all}))
+          {}
+          db-ids))
 
-(defn- table->adhoc-native-query-path [table] (adhoc-native-query-path (:db_id table)))
-(defn- table->schema-object-path      [table] (object-path (:db_id table) (:schema table)))
-(defn- table->table-object-path       [table] (object-path (:db_id table) (:schema table) (:id table)))
-(defn- table->all-schemas-path        [table] (all-schemas-path (:db_id table)))
-
-(s/defn ^:private table-graph :- TablePermissionsGraph [permissions-set table]
-  (case (permissions-for-path permissions-set (table->table-object-path table))
-    :all  :all
-    :none :none
-    :some {:read  (permissions-for-path permissions-set (table-read-path table))
-           :query (case (permissions-for-path permissions-set (table-query-path table))
-                    :all  :all
-                    :none :none
-                    :some (case (permissions-for-path permissions-set (table-segmented-query-path table))
-                            :all  :segmented
-                            :none :none))}))
-
-
-(s/defn ^:private schema-graph :- SchemaPermissionsGraph [permissions-set tables]
-  (case (permissions-for-path permissions-set (table->schema-object-path (first tables)))
-    :all  :all
-    :none :none
-    :some (into {} (for [table tables]
-                     {(u/get-id table) (table-graph permissions-set table)}))))
-
-(s/defn ^:private db-graph :- DBPermissionsGraph [permissions-set tables]
-  {:native
-   (case (permissions-for-path permissions-set (table->adhoc-native-query-path (first tables)))
-     :all  :write
-     :some :read
-     :none :none)
-
-   :schemas
-   (case (permissions-for-path permissions-set (table->all-schemas-path (first tables)))
-     :all  :all
-     :none :none
-     (into {} (for [[schema tables] (group-by :schema tables)]
-                ;; if schema is nil, replace it with an empty string, since that's how it will get encoded in JSON :D
-                {(str schema) (schema-graph permissions-set tables)})))})
-
-(s/defn ^:private group-graph :- GroupPermissionsGraph [permissions-set tables]
-  (m/map-vals (partial db-graph permissions-set)
-              tables))
-
-;; TODO - if a DB has no tables, then it won't show up in the permissions graph!
 (s/defn graph :- PermissionsGraph
   "Fetch a graph representing the current permissions status for every Group and all permissioned databases."
   []
   (let [permissions (db/select [Permissions :group_id :object], :group_id [:not= (:id (group/metabot))])
-        tables      (group-by :db_id (db/select ['Table :schema :id :db_id]))]
+        db-ids      (db/select-ids 'Database)]
     {:revision (perms-revision/latest-id)
-     :groups   (into {} (for [group-id (db/select-ids 'PermissionsGroup, :id [:not= (:id (group/metabot))])]
-                          (let [group-permissions-set (set (for [perms permissions
-                                                                 :when (= (:group_id perms) group-id)]
-                                                             (:object perms)))]
-                            {group-id (group-graph group-permissions-set tables)})))}))
-
+     :groups   (->> permissions
+                    (filter (comp #(re-find #"(^/db|^/$)" %) :object))
+                    (group-by :group_id)
+                    (m/map-vals (fn [group-permissions]
+                                  (let [permissions-graph (perms-parse/permissions->graph (map :object group-permissions))]
+                                    (if (= :all permissions-graph)
+                                      (all-permissions db-ids)
+                                      (:db permissions-graph))))))}))
 
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
@@ -534,36 +488,41 @@
   [group-or-id database-or-id]
   (grant-permissions! group-or-id (object-path database-or-id)))
 
-(defn- check-not-personal-collection-or-descendant
+(defn- is-personal-collection-or-descendant-of-one? [collection]
+  (classloader/require 'metabase.models.collection)
+  ((resolve 'metabase.models.collection/is-personal-collection-or-descendant-of-one?) collection))
+
+(s/defn ^:private check-not-personal-collection-or-descendant
   "Check whether `collection-or-id` refers to a Personal Collection; if so, throw an Exception. This is done because we
   *should* never be editing granting/etc. permissions for *Personal* Collections to entire Groups! Their owner will
   get implicit permissions automatically, and of course admins will be able to see them,but a whole group should never
   be given some sort of access."
-  [collection-or-id]
+  [collection-or-id :- MapOrID]
   ;; don't apply this check to the Root Collection, because it's never personal
-  (when-not (:metabase.models.collection/is-root? collection-or-id)
+  (when-not (:metabase.models.collection.root/is-root? collection-or-id)
     ;; ok, once we've confirmed this isn't the Root Collection, see if it's in the DB with a personal_owner_id
-    (when ((resolve 'metabase.models.collection/is-personal-collection-or-descendant-of-one?)
-           (if (map? collection-or-id)
-             collection-or-id
-             (db/select-one 'Collection :id (u/get-id collection-or-id))))
-      (throw (Exception. (tru "You cannot edit permissions for a Personal Collection or its descendants."))))))
+    (let [collection (if (map? collection-or-id)
+                       collection-or-id
+                       (or (db/select-one 'Collection :id (u/get-id collection-or-id))
+                           (throw (ex-info (tru "Collection does not exist.") {:collection-id (u/get-id collection-or-id)}))))]
+      (when (is-personal-collection-or-descendant-of-one? collection)
+        (throw (Exception. (tru "You cannot edit permissions for a Personal Collection or its descendants.")))))))
 
-(defn revoke-collection-permissions!
+(s/defn revoke-collection-permissions!
   "Revoke all access for `group-or-id` to a Collection."
-  [group-or-id collection-or-id]
+  [group-or-id :- MapOrID collection-or-id :- MapOrID]
   (check-not-personal-collection-or-descendant collection-or-id)
   (delete-related-permissions! group-or-id (collection-readwrite-path collection-or-id)))
 
-(defn grant-collection-readwrite-permissions!
+(s/defn grant-collection-readwrite-permissions!
   "Grant full access to a Collection, which means a user can view all Cards in the Collection and add/remove Cards."
-  [group-or-id collection-or-id]
+  [group-or-id :- MapOrID collection-or-id :- MapOrID]
   (check-not-personal-collection-or-descendant collection-or-id)
   (grant-permissions! (u/get-id group-or-id) (collection-readwrite-path collection-or-id)))
 
-(defn grant-collection-read-permissions!
+(s/defn grant-collection-read-permissions!
   "Grant read access to a Collection, which means a user can view all Cards in the Collection."
-  [group-or-id collection-or-id]
+  [group-or-id :- MapOrID collection-or-id :- MapOrID]
   (check-not-personal-collection-or-descendant collection-or-id)
   (grant-permissions! (u/get-id group-or-id) (collection-read-path collection-or-id)))
 
@@ -663,7 +622,7 @@
    Return a 409 (Conflict) if the numbers don't match up."
   [old-graph new-graph]
   (when (not= (:revision old-graph) (:revision new-graph))
-    (throw (ui18n/ex-info (str (deferred-tru "Looks like someone else edited the permissions and your data is out of date.")
+    (throw (ex-info (str (deferred-tru "Looks like someone else edited the permissions and your data is out of date.")
                                " "
                                (deferred-tru "Please fetch new data and try again."))
              {:status-code 409}))))
@@ -697,7 +656,8 @@
    returns the newly created `PermissionsRevision` entry."
   ([new-graph :- StrictPermissionsGraph]
    (let [old-graph (graph)
-         [old new] (data/diff (:groups old-graph) (:groups new-graph))]
+         [old new] (data/diff (:groups old-graph) (:groups new-graph))
+         old       (or old {})]
      (when (or (seq old) (seq new))
        (log-permissions-changes old new)
        (check-revision-numbers old-graph new-graph)
@@ -705,6 +665,7 @@
          (doseq [[group-id changes] new]
            (update-group-permissions! group-id changes))
          (save-perms-revision! (:revision old-graph) old new)))))
+
   ;; The following arity is provided soley for convenience for tests/REPL usage
   ([ks :- [s/Any], new-value]
    (update-graph! (assoc-in (graph) (cons :groups ks) new-value))))

@@ -1,7 +1,7 @@
 /* @flow */
 
-import type { DatasetData, Column } from "metabase/meta/types/Dataset";
-import type { ClickObject } from "metabase/meta/types/Visualization";
+import type { DatasetData, Column } from "metabase-types/types/Dataset";
+import type { ClickObject } from "metabase-types/types/Visualization";
 import { isNumber, isCoordinate } from "metabase/lib/schema_metadata";
 
 export function getTableCellClickedObject(
@@ -36,9 +36,10 @@ export function getTableCellClickedObject(
       dimensions: cols
         .map((column, index) => ({ value: row[index], column }))
         .filter(dimension => dimension.column.source === "breakout"),
+      origin: { rowIndex, row, cols },
     };
   } else {
-    return { value, column };
+    return { value, column, origin: { rowIndex, row, cols } };
   }
 }
 
@@ -66,5 +67,10 @@ export function getTableHeaderClickedObject(
  * Includes numbers and lat/lon coordinates, but not zip codes, IDs, etc.
  */
 export function isColumnRightAligned(column: Column) {
+  // handle remapped columns
+  if (column && column.remapped_to_column) {
+    // $FlowFixMe: remapped_to_column
+    column = column.remapped_to_column;
+  }
   return isNumber(column) || isCoordinate(column);
 }

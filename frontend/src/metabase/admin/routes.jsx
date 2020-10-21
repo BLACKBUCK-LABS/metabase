@@ -3,6 +3,8 @@ import { Route } from "metabase/hoc/Title";
 import { IndexRoute, IndexRedirect } from "react-router";
 import { t } from "ttag";
 
+import { PLUGIN_ADMIN_ROUTES } from "metabase/plugins";
+
 import { withBackground } from "metabase/hoc/Background";
 import { ModalRoute } from "metabase/hoc/ModalRoute";
 
@@ -20,8 +22,11 @@ import DatabaseListApp from "metabase/admin/databases/containers/DatabaseListApp
 import DatabaseEditApp from "metabase/admin/databases/containers/DatabaseEditApp";
 
 // Metadata / Data model
+import DataModelApp from "metabase/admin/datamodel/containers/DataModelApp";
 import MetadataEditorApp from "metabase/admin/datamodel/containers/MetadataEditorApp";
+import MetricListApp from "metabase/admin/datamodel/containers/MetricListApp";
 import MetricApp from "metabase/admin/datamodel/containers/MetricApp";
+import SegmentListApp from "metabase/admin/datamodel/containers/SegmentListApp";
 import SegmentApp from "metabase/admin/datamodel/containers/SegmentApp";
 import RevisionHistoryApp from "metabase/admin/datamodel/containers/RevisionHistoryApp";
 import AdminPeopleApp from "metabase/admin/people/containers/AdminPeopleApp";
@@ -34,12 +39,14 @@ import TaskModal from "metabase/admin/tasks/containers/TaskModal";
 import JobInfoApp from "metabase/admin/tasks/containers/JobInfoApp";
 import JobTriggersModal from "metabase/admin/tasks/containers/JobTriggersModal";
 import Logs from "metabase/admin/tasks/containers/Logs";
+import Help from "metabase/admin/tasks/containers/Help";
 
 // People
 import PeopleListingApp from "metabase/admin/people/containers/PeopleListingApp";
 import GroupsListingApp from "metabase/admin/people/containers/GroupsListingApp";
 import GroupDetailApp from "metabase/admin/people/containers/GroupDetailApp";
 
+// Permissions
 import getAdminPermissionsRoutes from "metabase/admin/permissions/routes";
 
 const getRoutes = (store, IsAdmin) => (
@@ -56,7 +63,7 @@ const getRoutes = (store, IsAdmin) => (
       <Route path=":databaseId" component={DatabaseEditApp} />
     </Route>
 
-    <Route path="datamodel" title={t`Data Model`}>
+    <Route path="datamodel" title={t`Data Model`} component={DataModelApp}>
       <IndexRedirect to="database" />
       <Route path="database" component={MetadataEditorApp} />
       <Route path="database/:databaseId" component={MetadataEditorApp} />
@@ -73,8 +80,10 @@ const getRoutes = (store, IsAdmin) => (
         <IndexRedirect to="general" />
         <Route path=":section" component={FieldApp} />
       </Route>
+      <Route path="metrics" component={MetricListApp} />
       <Route path="metric/create" component={MetricApp} />
       <Route path="metric/:id" component={MetricApp} />
+      <Route path="segments" component={SegmentListApp} />
       <Route path="segment/create" component={SegmentApp} />
       <Route path="segment/:id" component={SegmentApp} />
       <Route path=":entity/:id/revisions" component={RevisionHistoryApp} />
@@ -109,7 +118,8 @@ const getRoutes = (store, IsAdmin) => (
       title={t`Troubleshooting`}
       component={TroubleshootingApp}
     >
-      <IndexRedirect to="tasks" />
+      <IndexRedirect to="help" />
+      <Route path="help" component={Help} />
       <Route path="tasks" component={TasksApp}>
         <ModalRoute path=":taskId" modal={TaskModal} />
       </Route>
@@ -126,12 +136,14 @@ const getRoutes = (store, IsAdmin) => (
     {/* SETTINGS */}
     <Route path="settings" title={t`Settings`}>
       <IndexRedirect to="setup" />
-      {/* <IndexRoute component={SettingsEditorApp} /> */}
-      <Route path=":section/:authType" component={SettingsEditorApp} />
-      <Route path=":section" component={SettingsEditorApp} />
+      <Route path="*" component={SettingsEditorApp} />
     </Route>
 
+    {/* PERMISSIONS */}
     {getAdminPermissionsRoutes(store)}
+
+    {/* PLUGINS */}
+    {PLUGIN_ADMIN_ROUTES.map(getRoutes => getRoutes(store))}
   </Route>
 );
 

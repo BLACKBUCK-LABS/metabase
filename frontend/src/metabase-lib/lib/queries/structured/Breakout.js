@@ -2,7 +2,7 @@
 
 import MBQLClause from "./MBQLClause";
 
-import type { Breakout as BreakoutObject } from "metabase/meta/types/Query";
+import type { Breakout as BreakoutObject } from "metabase-types/types/Query";
 import type StructuredQuery from "metabase-lib/lib/queries/StructuredQuery";
 import type Dimension from "metabase-lib/lib/Dimension";
 import type Field from "metabase-lib/lib/metadata/Field";
@@ -24,7 +24,7 @@ export default class Breakout extends MBQLClause {
    * Adds itself to the parent query and returns the new StructuredQuery
    */
   add(): StructuredQuery {
-    return this._query.addBreakout(this);
+    return this._query.breakout(this);
   }
 
   /**

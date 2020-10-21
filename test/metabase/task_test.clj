@@ -1,13 +1,22 @@
 (ns metabase.task-test
-  (:require [clojurewerkz.quartzite
+  (:require [clojure.test :refer :all]
+            [clojurewerkz.quartzite
              [jobs :as jobs]
              [scheduler :as qs]
              [triggers :as triggers]]
             [clojurewerkz.quartzite.schedule.cron :as cron]
             [expectations :refer [expect]]
-            [metabase.task :as task]
-            [metabase.test.util :as tu])
+            [metabase
+             [task :as task]
+             [test :as mt]]
+            [metabase.test
+             [fixtures :as fixtures]
+             [util :as tu]]
+            [metabase.util.schema :as su]
+            [schema.core :as s])
   (:import [org.quartz CronTrigger JobDetail]))
+
+(use-fixtures :once (fixtures/initialize :db))
 
 ;; make sure we attempt to reschedule tasks so changes made in source are propogated to JDBC backend
 
@@ -77,3 +86,17 @@
     (task/schedule-task! (job) (trigger-1))
     (task/schedule-task! (job) (trigger-2))
     (triggers)))
+
+(deftest scheduler-info-test
+  (testing "Make sure scheduler-info doesn't explode and returns info in the general shape we expect"
+    (mt/with-temp-scheduler
+      (is (schema= {:scheduler (su/non-empty [s/Str])
+                    :jobs      [{:key         su/NonBlankString
+                                 :description su/NonBlankString
+                                 :triggers    [{:key                 su/NonBlankString
+                                                :description         su/NonBlankString
+                                                :misfire-instruction su/NonBlankString
+                                                :state               su/NonBlankString
+                                                s/Keyword            s/Any}]
+                                 s/Keyword    s/Any}]}
+                   (task/scheduler-info))))))

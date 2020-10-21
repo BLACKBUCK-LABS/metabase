@@ -1,4 +1,4 @@
-import { fetchData, updateData } from "metabase/lib/redux";
+import { fetchData, updateData, mergeEntities } from "metabase/lib/redux";
 
 import { delay } from "metabase/lib/promise";
 
@@ -7,8 +7,8 @@ describe("Metadata", () => {
     existingData = "data",
     newData = "new data",
     requestState = null,
-    requestStateLoading = { state: "LOADING" },
-    requestStateLoaded = { state: "LOADED" },
+    requestStateLoading = { loading: true },
+    requestStateLoaded = { loaded: true },
     requestStateError = { error: new Error("error") },
     statePath = ["test", "path"],
     statePathFetch = statePath.concat("fetch"),
@@ -17,9 +17,7 @@ describe("Metadata", () => {
     existingStatePath = statePath,
     getState = () => ({
       requests: {
-        states: {
-          test: { path: { fetch: requestState, update: requestState } },
-        },
+        test: { path: { fetch: requestState, update: requestState } },
       },
       test: { path: existingData },
     }),
@@ -141,6 +139,30 @@ describe("Metadata", () => {
       await delay(10);
       expect(argsFail.dispatch.calls.count()).toEqual(2);
       expect(data).toEqual(args.existingData);
+    });
+  });
+
+  describe("mergeEntities", () => {
+    it("add an entity", () => {
+      expect(
+        mergeEntities(
+          { 1: { id: 1, name: "foo" } },
+          { 2: { id: 2, name: "bar" } },
+        ),
+      ).toEqual({ 1: { id: 1, name: "foo" }, 2: { id: 2, name: "bar" } });
+    });
+    it("merge entity keys", () => {
+      expect(
+        mergeEntities(
+          { 1: { id: 1, name: "foo", prop1: 123 } },
+          { 1: { id: 1, name: "bar", prop2: 456 } },
+        ),
+      ).toEqual({ 1: { id: 1, name: "bar", prop1: 123, prop2: 456 } });
+    });
+    it("delete an entity", () => {
+      expect(
+        mergeEntities({ 1: { id: 1 }, 2: { id: 2 } }, { 2: null }),
+      ).toEqual({ 1: { id: 1 } });
     });
   });
 });

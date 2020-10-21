@@ -27,6 +27,8 @@ export default class ChartNestedSettingSeries extends React.Component {
     const objectKey = object && getObjectKey(object);
     const isSelected = single => objectKey === getObjectKey(single);
 
+    const display = object && object.card.display;
+    const isLineAreaBar = ["line", "area", "bar", "combo"].includes(display);
     const isStacked = settings["stackable.stack_type"] != null;
 
     return (
@@ -38,7 +40,7 @@ export default class ChartNestedSettingSeries extends React.Component {
             return (
               <div
                 key={key}
-                className="px4 pb2 mb2 border-bottom align-self-stretch"
+                className="px4 pt2 mt2 border-top align-self-stretch"
               >
                 <div className="flex align-center">
                   <ColorPicker
@@ -58,7 +60,7 @@ export default class ChartNestedSettingSeries extends React.Component {
                       onChangeObjectSettings(single, { title: e.target.value })
                     }
                   />
-                  {!isStacked ? (
+                  {isLineAreaBar && !isStacked ? (
                     <ButtonGroup
                       className="ml1 align-self-stretch"
                       value={settings.display}

@@ -14,65 +14,42 @@
             [metabase.models.field :refer [Field]]
             [metabase.test.data :as data]
             [metabase.test.data
-             [datasets :as datasets]
              [env :as tx.env]
              [interface :as tx]]
             [toucan.db :as db]))
 
 ;;; ---------------------------------------------- Helper Fns + Macros -----------------------------------------------
 
-;; TODO - now that we've added Google Analytics to this, `timeseries-drivers` doesn't really make sense anymore.
-;; Perhaps we should rename it to `abnormal-drivers`
+;; Non-"normal" drivers are tested in `timeseries-query-processor-test` and elsewhere
+(def ^:private abnormal-drivers
+  "Drivers that are so weird that we can't run the normal driver tests against them."
+  #{:druid :googleanalytics})
 
-;; Event-Based DBs aren't tested here, but in `event-query-processor-test` instead.
-(def ^:private timeseries-drivers #{:druid :googleanalytics})
+(defn normal-drivers
+  "Drivers that are reasonably normal in the sense that they can participate in the shared driver tests."
+  []
+  (set/difference (tx.env/test-drivers) abnormal-drivers))
 
-(def non-timeseries-drivers
-  "Set of engines for non-timeseries DBs (i.e., every driver except `:druid`)."
-  (set/difference tx.env/test-drivers timeseries-drivers))
-
-(defn non-timeseries-drivers-with-feature
+(defn normal-drivers-with-feature
   "Set of engines that support a given `feature`. If additional features are given, it will ensure all features are
   supported."
   [feature & more-features]
   (let [features (set (cons feature more-features))]
-    (set (for [engine non-timeseries-drivers
-               :when  (set/subset? features (driver.u/features engine))]
-           engine))))
+    (set (for [driver (normal-drivers)
+               :let   [driver (tx/the-driver-with-test-extensions driver)]
+               :when  (set/subset? features (driver.u/features driver))]
+           driver))))
 
-(defn non-timeseries-drivers-without-feature
-  "Return a set of all non-timeseries engines (e.g., everything except Druid) that DO NOT support `feature`."
+(defn normal-drivers-without-feature
+  "Return a set of all non-timeseries engines (e.g., everything except Druid and Google Analytics) that DO NOT support
+  `feature`."
   [feature]
-  (set/difference non-timeseries-drivers (non-timeseries-drivers-with-feature feature)))
+  (set/difference (normal-drivers) (normal-drivers-with-feature feature)))
 
-;; TODO - should be renamed to `expect-with-non-timeseries-drivers`
-(defmacro expect-with-non-timeseries-dbs
-  {:style/indent 0}
-  [expected actual]
-  `(datasets/expect-with-drivers non-timeseries-drivers
-     ~expected
-     ~actual))
-
-(defmacro expect-with-non-timeseries-dbs-except
-  {:style/indent 1}
-  [excluded-engines expected actual]
-  `(datasets/expect-with-drivers (set/difference non-timeseries-drivers (set ~excluded-engines))
-     ~expected
-     ~actual))
-
-(defmacro ^:deprecated qp-expect-with-all-drivers
-  "Wraps `expected` form in the 'wrapped' query results (includes `:status` and `:row_count`.)
-
-  DEPRECATED -- If you don't care about `:status` and `:row_count` (you usually don't) use `qp.test/rows` or
-  `qp.test/rows-and-columns` instead."
-  {:style/indent 0}
-  [data query-form & post-process-fns]
-  `(expect-with-non-timeseries-dbs
-     {:status    :completed
-      :row_count ~(count (:rows data))
-      :data      ~data}
-     (-> ~query-form
-         ~@post-process-fns)))
+(defn normal-drivers-except
+  "Return the set of all drivers except Druid, Google Analytics, and those in `excluded-drivers`."
+  [excluded-drivers]
+  (set/difference (normal-drivers) (set excluded-drivers)))
 
 ;; Predefinied Column Fns: These are meant for inclusion in the expected output of the QP tests, to save us from
 ;; writing the same results several times
@@ -230,18 +207,22 @@
 
 (defmethod format-rows-fns :categories
   [_]
+  ;; ID NAME
   [int identity])
 
 (defmethod format-rows-fns :checkins
   [_]
+  ;; ID DATE USER_ID VENUE_ID
   [int identity int int])
 
 (defmethod format-rows-fns :users
   [_]
+  ;; ID NAME LAST_LOGIN
   [int identity identity])
 
 (defmethod format-rows-fns :venues
   [_]
+  ;; ID NAME CATEGORY_ID LATITUDE LONGITUDE PRICE
   [int identity int 4.0 4.0 int])
 
 (defn- format-rows-fn
@@ -297,7 +278,7 @@
                       (try
                         (f v)
                         (catch Throwable e
-                          (throw (ex-info (printf "format-rows-by failed (f = %s, value = %s %s): %s" f (.getName (class v)) v (.getMessage e))
+                          (throw (ex-info (format "format-rows-by failed (f = %s, value = %s %s): %s" f (.getName (class v)) v (.getMessage e))
                                    {:f f, :v v}
                                    e)))))))))
 
@@ -308,8 +289,7 @@
   "Return the result `data` from a successful query run, or throw an Exception if processing failed."
   {:style/indent 0}
   [results]
-  (when (= (:status results) :failed)
-    (println "Error running query:" (u/pprint-to-str 'red results))
+  (when (#{:failed "failed"} (:status results))
     (throw (ex-info (str (or (:error results) "Error running query"))
              (if (map? results) results {:results results}))))
   (:data results))
@@ -345,7 +325,7 @@
   "Return the result `:cols` from query `results`, or throw an Exception if they're missing."
   {:style/indent 0}
   [results]
-  (or (some-> (data results) :cols vec)
+  (or (some->> (data results) :cols (mapv #(into {} %)))
       (throw (ex-info "Query does not have any :cols in results." results))))
 
 (defn rows-and-cols
@@ -369,4 +349,5 @@
   differentiate Oracle from the other report-timezone databases until that bug can get fixed. Redshift and Snowflake
   also have this issue."
   [driver]
+  ;; TIMEZONE FIXME — remove this and fix the drivers
   (contains? #{:snowflake :oracle :redshift} driver))

@@ -9,12 +9,13 @@
              [util :as u]]
             [metabase.db.metadata-queries :as metadata-queries]
             [metabase.models.field :refer [Field]]
+            [metabase.query-processor.store :as qp.store]
             [metabase.sync
              [interface :as i]
              [util :as sync-util]]
             [metabase.sync.analyze.fingerprint.fingerprinters :as f]
             [metabase.util
-             [date :as du]
+             [i18n :refer [trs]]
              [schema :as su]]
             [redux.core :as redux]
             [schema.core :as s]
@@ -22,7 +23,7 @@
 
 (s/defn ^:private save-fingerprint!
   [field :- i/FieldInstance, fingerprint :- (s/maybe i/Fingerprint)]
-  (log/debug (format "Saving fingerprint for %s" (sync-util/name-for-logging field)))
+  (log/debug (trs "Saving fingerprint for {0}" (sync-util/name-for-logging field)))
   ;; All Fields who get new fingerprints should get marked as having the latest fingerprint version, but we'll
   ;; clear their values for `last_analyzed`. This way we know these fields haven't "completed" analysis for the
   ;; latest fingerprints.
@@ -31,11 +32,19 @@
     :fingerprint_version i/latest-fingerprint-version
     :last_analyzed       nil))
 
-(defn- empty-stats-map [fields-count]
+(defn empty-stats-map
+  "The default stats before any fingerprints happen"
+  [fields-count]
   {:no-data-fingerprints   0
    :failed-fingerprints    0
    :updated-fingerprints   0
    :fingerprints-attempted fields-count})
+
+(def truncation-size
+  "The maximum size of :type/Text to be selected from the database in `table-rows-sample`. In practice we see large
+  text blobs and want to balance taking enough for distinct counts and but not so much that we risk out of memory
+  issues when syncing."
+  1234)
 
 (s/defn ^:private fingerprint-table!
   [table :- i/TableInstance, fields :- [i/FieldInstance]]
@@ -57,7 +66,7 @@
                               (update count-info :updated-fingerprints inc))))
                         (empty-stats-map (count fingerprints))
                         (map vector fields fingerprints))))
-             (metadata-queries/table-rows-sample table fields)))
+             (metadata-queries/table-rows-sample table fields {:truncation-size truncation-size})))
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                    WHICH FIELDS NEED UPDATED FINGERPRINTS?                                     |
@@ -135,6 +144,7 @@
              [:not (mdb/isa :special_type :type/PK)]
              [:= :special_type nil]]
             [:not-in :visibility_type ["retired" "sensitive"]]
+            [:not= :base_type "type/Structured"]
             (cons :or (versions-clauses))]})
 
   ([table :- i/TableInstance]
@@ -158,7 +168,12 @@
   "Generate and save fingerprints for all the Fields in TABLE that have not been previously analyzed."
   [table :- i/TableInstance]
   (if-let [fields (fields-to-fingerprint table)]
-    (fingerprint-table! table fields)
+    (let [stats (sync-util/with-error-handling
+                  (format "Error fingerprinting %s" (sync-util/name-for-logging table))
+                  (fingerprint-table! table fields))]
+      (if (instance? Exception stats)
+        (empty-stats-map 0)
+        stats))
     (empty-stats-map 0)))
 
 (s/defn fingerprint-fields-for-db!
@@ -166,9 +181,14 @@
   [database :- i/DatabaseInstance
    tables :- [i/TableInstance]
    log-progress-fn]
-  (du/with-effective-timezone database
+  ;; TODO: Maybe the driver should have a function to tell you if it supports fingerprinting?
+  (qp.store/with-store
+    ;; store is bound so DB timezone can be used in date coercion logic
+    (qp.store/store-database! database)
     (apply merge-with + (for [table tables
-                              :let [result (fingerprint-fields! table)]]
+                              :let  [result (if (= :googleanalytics (:engine database))
+                                              (empty-stats-map 0)
+                                              (fingerprint-fields! table))]]
                           (do
                             (log-progress-fn "fingerprint-fields" table)
                             result)))))
