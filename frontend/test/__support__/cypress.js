@@ -107,25 +107,64 @@ export function typeAndBlurUsingLabel(label, value) {
     .blur();
 }
 
+// Unfortunately, cypress `.type()` is currently broken and requires an ugly "hack"
+// it is documented here: https://github.com/cypress-io/cypress/issues/5480
+// `_typeUsingGet()` and `_typeUsingPlacehodler()` are temporary solution
+// please refrain from using them, unless absolutely neccessary!
+export function _typeUsingGet(selector, value, delay = 100) {
+  cy.get(selector)
+    .click()
+    .type(value, { delay })
+    .clear()
+    .click()
+    .type(value, { delay });
+}
+
+export function _typeUsingPlaceholder(selector, value, delay = 100) {
+  cy.findByPlaceholderText(selector)
+    .click()
+    .type(value, { delay })
+    .clear()
+    .click()
+    .type(value, { delay });
+}
+
 Cypress.on("uncaught:exception", (err, runnable) => false);
 
-export function withSampleDataset(f) {
-  cy.request("GET", "/api/database/1/metadata").then(({ body }) => {
-    const SAMPLE_DATASET = {};
+export function withDatabase(databaseId, f) {
+  cy.request("GET", `/api/database/${databaseId}/metadata`).then(({ body }) => {
+    const database = {};
     for (const table of body.tables) {
       const fields = {};
       for (const field of table.fields) {
         fields[field.name] = field.id;
       }
-      SAMPLE_DATASET[table.name] = fields;
-      SAMPLE_DATASET[table.name + "_ID"] = table.id;
+      database[table.name] = fields;
+      database[table.name + "_ID"] = table.id;
     }
-    f(SAMPLE_DATASET);
+    f(database);
   });
+}
+
+export function withSampleDataset(f) {
+  return withDatabase(1, f);
 }
 
 export function visitAlias(alias) {
   cy.get(alias).then(url => {
     cy.visit(url);
+  });
+}
+
+export function createNativeQuestion(name, query) {
+  return cy.request("POST", "/api/card", {
+    name,
+    dataset_query: {
+      type: "native",
+      native: { query },
+      database: 1,
+    },
+    display: "table",
+    visualization_settings: {},
   });
 }
