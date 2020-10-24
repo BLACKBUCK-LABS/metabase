@@ -4,6 +4,7 @@
   formatting the results."
   (:require [clojure.tools.logging :as log]
             [java-time :as t]
+            [medley.core :as m]
             [metabase.models
              [database :refer [Database]]
              [query :as query]
@@ -82,6 +83,8 @@
    (result-with-original-query result query-execution)
    (-> query-execution
        add-running-time
+       (assoc-in [:json_query :native :query] (get-in query-execution [:original_query_stmt]))
+       (m/dissoc-in [:json_query :native :original_query])
        (dissoc :error :hash :executor_id :card_id :dashboard_id :pulse_id :result_rows :native :original_query_stmt))
    {:status                 :completed
     :average_execution_time (when cached?
@@ -145,7 +148,7 @@
 (defn limit-native-query?
       [database]
       (let[engine (:engine (db/select-one  (into [Database] [:id :engine]) :id database))]
-          (if (some (partial =  (name engine)) ["presto" "mysql" "postgres" "redshift" "athena"]) true false)
+          (if (some (partial =  (name engine)) ["presto" "mysql" "postgres" "redshift" "athena" "h2"]) true false)
           ))
 
 (defn add-limit-query
