@@ -148,7 +148,7 @@
 (defn limit-native-query?
       [database]
       (let[engine (:engine (db/select-one  (into [Database] [:id :engine]) :id database))]
-          (if (some (partial =  (name engine)) ["presto" "mysql" "postgres" "redshift" "athena", "h2"]) true false)
+          (if (some (partial =  (name engine)) ["presto" "mysql" "postgres" "redshift" "athena" "h2"]) true false)
           ))
 
 (defn add-limit-query
