@@ -27,11 +27,14 @@
 (defn default-query->remark
   "Generates the default query remark. Exists as a separate function so that overrides of the query->remark multimethod
    can access the default value."
-  [{{:keys [executed-by query-hash], :as info} :info, query-type :type}]
+  [{{:keys [executed-by query-hash card-id pulse-id dashboard-id], :as info} :info, query-type :type}]
   (str "Metabase" (when executed-by
                     (assert (instance? (Class/forName "[B") query-hash))
-                    (format ":: userID: %s queryType: %s queryHash: %s"
+                    (format ":: userID: %s :: cardId: %s :: pulseId: %s :: dashboardId: %s :: queryType: %s queryHash: %s"
                             executed-by
+                            card-id
+                            pulse-id
+                            dashboard-id
                             (case (keyword query-type)
                               :query  "MBQL"
                               :native "native")

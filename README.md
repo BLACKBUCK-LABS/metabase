@@ -1,5 +1,17 @@
 # Metabase
 
+# Development guide for blackbuck
+- To run:
+```sh
+lein run
+```
+- To build: From project root run
+```sh
+./bin/build no-translations
+```
+- To deploy: Upload jar to git release (jar at `target/uberjar/metabase.jar`) and Download jar on server
+- For more details - https://www.metabase.com/docs/v0.36.7/developers-guide.html
+
 Metabase is the easy, open source way for everyone in your company to ask questions and learn from data.
 
 ![Metabase Product Screenshot](docs/metabase-product-screenshot.png)
